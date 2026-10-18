@@ -1,0 +1,37 @@
+{#- One file on the week board.
+    Expects `f` and `subject`. Optional: `note` (why it's unsorted), `show_type` (tag the
+    type, for mixed sections), `group` (a LectureGroup: show slides/transcript presence). -#}
+<div class="chip {{ 'review' if f.needs_review }} {{ 'excluded' if not f.included }}"
+     draggable="true" data-file-id="{{ f.id }}" tabindex="0"
+     title="{{ f.filename }}&#10;{{ f.classify_reason }}">
+  <div class="chip-main">
+    {% set chip_title = f | file_title(subject) %}
+    <span class="chip-title">{{ chip_title }}</span>
+    {% if show_type %}<span class="tag t-{{ f.type }}">{{ f.type | replace("_", " ") }}</span>{% endif %}
+    {% if note and f.week is not none %}<span class="badge">W{{ f.week }}</span>{% endif %}
+    {% if f.lecture is not none and not chip_title.startswith("Lecture") %}<span class="badge">L{{ f.lecture }}</span>{% endif %}
+    {% if group %}{% include "_presence.html" %}
+    {% elif f.has_timestamps %}<span class="badge" title="Has timestamps">⏱</span>{% endif %}
+    {% if f.needs_review %}<span class="conf" title="Confidence of the guess">{{ "%.0f" | format(f.classify_confidence * 100) }}%</span>{% endif %}
+  </div>
+  <div class="chip-file">{{ f.filename }}</div>
+  {% if note %}<div class="chip-note">{{ note }}</div>{% endif %}
+  {% if f.needs_review or f.type == "reading" %}
+  <div class="chip-actions">
+    {% if f.needs_review %}
+    <button type="button" class="ghost small" title="The guess is right"
+            hx-patch="/files/{{ f.id }}" hx-vals='{"reviewed": "true", "view": "board"}'
+            hx-target="#view">✓ Looks right</button>
+    {% endif %}
+    {% if f.type == "reading" %}
+    <button type="button" class="ghost small"
+            hx-patch="/files/{{ f.id }}"
+            hx-vals='{"included": "{{ "false" if f.included else "true" }}", "view": "board"}'
+            hx-target="#view">{{ "Exclude" if f.included else "Include" }}</button>
+    {% endif %}
+  </div>
+  {% endif %}
+  <button type="button" class="del" aria-label="Delete {{ f.filename }}"
+          hx-delete="/files/{{ f.id }}?view=board" hx-target="#view"
+          hx-confirm="Delete “{{ f.filename }}”? This removes the stored file.">✕</button>
+</div>

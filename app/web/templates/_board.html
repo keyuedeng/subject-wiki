@@ -1,0 +1,71 @@
+{% include "_summary.html" %}
+
+{#- A drop zone holding chips. `files` or `lectures` (LectureGroups) fill it. -#}
+{% macro zone(key, week=none, files=[], lectures=none, label=none, show_type=false, extra="") %}
+<div class="slot {{ extra }} {{ 'has-files' if files or lectures }}" data-slot="{{ key }}"
+     {% if week is not none %}data-week="{{ week }}"{% endif %}>
+  <span class="slot-label">{{ label or SLOTS[key].label }}</span>
+  <div class="chips">
+    {% if lectures %}
+      {% for group in lectures %}{% include "_lecture.html" %}{% endfor %}
+    {% else %}
+      {% for f in files %}{% include "_chip.html" %}{% endfor %}
+    {% endif %}
+    {% if not files and not lectures %}<span class="none">–</span>{% endif %}
+  </div>
+</div>
+{% endmacro %}
+
+{% if board.unsorted %}
+<details class="board-section unsorted" open>
+  <summary><h2>Unsorted <span class="count">· <span class="unsorted-count">{{ board.unsorted | length }}</span></span></h2></summary>
+  <p class="hint">Low-confidence guesses or files without a week. Drag each into place, or confirm the guess.</p>
+  <div class="chips">
+    {% for f, note in board.unsorted %}{% with show_type = true %}{% include "_chip.html" %}{% endwith %}{% endfor %}
+  </div>
+</details>
+{% endif %}
+
+<section class="board-section">
+  <h2>Whole subject</h2>
+  <div class="row subject-row">
+    {{ zone("outline", none, board.subject["outline"]) }}
+    {{ zone("exams", none, board.subject["exams"], label="Exams") }}
+    {{ zone("subject_other", none, board.subject["subject_other"], show_type=true) }}
+  </div>
+</section>
+
+<section class="board-section">
+  <h2>Weeks</h2>
+  <div class="week-columns" aria-hidden="true">
+    <span></span><span>Lectures</span><span>Tutorials</span><span>Solutions</span>
+  </div>
+  <ol class="weeks">
+    {% for row in board.rows %}
+    {% set c = row.completeness %}
+    <li class="row week-row {{ 'is-empty' if c.empty }} {{ 'complete' if c.complete }}">
+      <div class="week-head">
+        <span class="week-name">Week {{ row.week }}</span>
+        <span class="dots" role="img" title="{{ c.summary }}" aria-label="{{ c.summary }}">
+          <span class="dot {{ 'on' if c.slides }}"></span>
+          <span class="dot {{ 'on' if c.transcript else ('part' if c.lectures_with_transcript) }}"></span>
+          <span class="dot {{ 'on' if c.tutorial }}"></span>
+        </span>
+      </div>
+      {{ zone("lectures", row.week, lectures=row.lectures, extra="zone-lectures") }}
+      {{ zone("tutorials", row.week, row.slots["tutorials"]) }}
+      {{ zone("solutions", row.week, row.slots["solutions"]) }}
+      {{ zone("week_other", row.week, row.slots["week_other"], extra="zone-other") }}
+    </li>
+    {% endfor %}
+  </ol>
+  <p class="hint legend">
+    <span class="dot on"></span><span class="dot on"></span><span class="dot"></span>
+    slides · transcript for every lecture · tutorial. Hover a week for details.
+  </p>
+</section>
+
+<details class="board-section readings">
+  <summary><h2>Readings <span class="count">· {{ board.readings | length }} · excluded by default</span></h2></summary>
+  <div class="row">{{ zone("readings", none, board.readings, label="Readings") }}</div>
+</details>

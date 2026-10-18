@@ -1,0 +1,36 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{% block title %}Subject Wiki{% endblock %}</title>
+  <link rel="stylesheet" href="/static/style.css">
+  <script src="/static/htmx.min.js"></script>  <!-- htmx 2.0.4, vendored -->
+</head>
+<body>
+  <header class="topbar">
+    <div class="container"><a href="/" class="brand">Subject Wiki</a></div>
+  </header>
+  <main class="container page" {% block main_attrs %}{% endblock %}>
+    {% block content %}{% endblock %}
+  </main>
+  <div id="toast" class="toast" role="status" aria-live="polite" hidden></div>
+  <script>
+    // Show server error messages (422/502) from HTMX requests instead of failing silently.
+    document.body.addEventListener("htmx:responseError", (e) => {
+      let msg = e.detail.xhr.responseText;
+      try { msg = JSON.parse(msg).detail || msg; } catch (_) {}
+      window.showToast(typeof msg === "string" ? msg : "Something went wrong", true);
+    });
+    window.showToast = (text, isError) => {
+      const t = document.getElementById("toast");
+      t.textContent = text;
+      t.classList.toggle("error", !!isError);
+      t.hidden = false;
+      clearTimeout(t._timer);
+      t._timer = setTimeout(() => (t.hidden = true), 5000);
+    };
+  </script>
+  {% block scripts %}{% endblock %}
+</body>
+</html>

@@ -1,0 +1,6 @@
+<p class="summary">
+  {{ summary.total }} file{{ "" if summary.total == 1 else "s" }}
+  {% if summary.review %}· <span class="pill warn">{{ summary.review }} need{{ "s" if summary.review == 1 }} review</span>{% endif %}
+  {% if summary.excluded %}· {{ summary.excluded }} excluded{% endif %}
+  {% if summary.transcripts %}· {{ summary.timestamped }}/{{ summary.transcripts }} transcripts timestamped{% endif %}
+</p>

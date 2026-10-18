@@ -1,0 +1,48 @@
+<tr id="file-{{ f.id }}" class="{{ 'review' if f.needs_review }} {{ 'excluded' if not f.included }}"
+    hx-target="this" hx-swap="outerHTML">
+  <td class="name" title="{{ f.filename }}">
+    <div class="name-title">{{ f | file_title(subject) }}</div>
+    <div class="name-file">{{ f.filename }}</div>
+  </td>
+  <td>
+    <select name="type" aria-label="Type" hx-patch="/files/{{ f.id }}" hx-trigger="change"
+            hx-vals='{"view": "row"}'>
+      {% for t in FILE_TYPES %}
+      <option value="{{ t }}" {{ "selected" if f.type == t }}>{{ t | replace("_", " ") }}</option>
+      {% endfor %}
+    </select>
+  </td>
+  <td>
+    <input name="week" type="number" min="0" max="52" value="{{ f.week if f.week is not none }}"
+           aria-label="Week" hx-patch="/files/{{ f.id }}" hx-trigger="change" hx-vals='{"view": "row"}'>
+  </td>
+  <td>
+    <input name="lecture" type="number" min="0" max="99" value="{{ f.lecture if f.lecture is not none }}"
+           aria-label="Lecture" hx-patch="/files/{{ f.id }}" hx-trigger="change" hx-vals='{"view": "row"}'>
+  </td>
+  <td class="num">{{ f.size_bytes | filesize }}</td>
+  <td class="nowrap">{{ f.created_at | date }}</td>
+  <td>{% if f.type == "transcript" %}{{ "Yes" if f.has_timestamps else "No" }}{% else %}<span class="muted">–</span>{% endif %}</td>
+  <td>
+    <button type="button" class="toggle {{ 'on' if f.included }}" role="switch"
+            aria-checked="{{ 'true' if f.included else 'false' }}"
+            aria-label="Include {{ f.filename }}"
+            hx-patch="/files/{{ f.id }}"
+            hx-vals='{"included": "{{ "false" if f.included else "true" }}", "view": "row"}'>
+      {{ "Included" if f.included else "Excluded" }}
+    </button>
+  </td>
+  <td class="guess" title="{{ f.classify_reason }}">
+    <span class="conf {{ 'low' if f.needs_review }}">{{ "%.0f" | format(f.classify_confidence * 100) }}%</span>
+    <span class="reason">{{ "reviewed" if f.reviewed else f.classify_reason }}</span>
+  </td>
+  <td class="nowrap actions">
+    {% if f.needs_review %}
+    <button type="button" class="ghost small" title="The guess is right"
+            hx-patch="/files/{{ f.id }}" hx-vals='{"reviewed": "true", "view": "row"}'>✓</button>
+    {% endif %}
+    <button type="button" class="del" aria-label="Delete {{ f.filename }}"
+            hx-delete="/files/{{ f.id }}?view=table" hx-target="#view" hx-swap="innerHTML"
+            hx-confirm="Delete “{{ f.filename }}”? This removes the stored file.">✕</button>
+  </td>
+</tr>

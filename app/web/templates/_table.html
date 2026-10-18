@@ -1,0 +1,19 @@
+{% include "_summary.html" %}
+{% if files %}
+<p class="hint">Changes save as you make them. Highlighted rows are low-confidence guesses: fix them or press ✓.</p>
+<div class="table-wrap">
+  <table class="files">
+    <thead>
+      <tr>
+        <th>Name</th><th>Type</th><th>Week</th><th>Lecture</th><th>Size</th>
+        <th>Uploaded</th><th>Timestamps</th><th>Included</th><th>Guess</th><th></th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for f in files %}{% include "_file_row.html" %}{% endfor %}
+    </tbody>
+  </table>
+</div>
+{% else %}
+<p class="empty">No files yet. Drop some above.</p>
+{% endif %}

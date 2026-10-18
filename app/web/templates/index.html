@@ -1,0 +1,75 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="page-head">
+  <h1>Subjects</h1>
+  {% if cards %}
+  <button type="button" class="primary" data-open-dialog="new-subject">+ New subject</button>
+  {% endif %}
+</div>
+
+{% if cards %}
+<ul class="subject-grid">
+  {% for c in cards %}
+  <li>
+    <a class="subject-card" href="/subjects/{{ c.subject.id }}">
+      <span class="subject-name">{{ c.subject.name }}</span>
+      {% if c.subject.code %}<span class="subject-code">{{ c.subject.code }}</span>{% endif %}
+      {% if c.files %}
+      <span class="subject-stats">{{ c.files }} file{{ "" if c.files == 1 else "s" }} · {{ c.subject.weeks }} weeks</span>
+      <span class="progress" role="progressbar" aria-label="Weeks complete"
+            aria-valuemin="0" aria-valuemax="{{ c.subject.weeks }}" aria-valuenow="{{ c.complete_weeks }}">
+        <span style="width: {{ (100 * c.complete_weeks / c.subject.weeks) | round }}%"></span>
+      </span>
+      <span class="subject-progress muted">{{ c.complete_weeks }} of {{ c.subject.weeks }} weeks complete</span>
+      {% else %}
+      <span class="subject-stats">No files yet · {{ c.subject.weeks }} weeks</span>
+      {% endif %}
+      {% if c.review %}<span class="pill warn">{{ c.review }} to review</span>{% endif %}
+    </a>
+  </li>
+  {% endfor %}
+</ul>
+{% else %}
+<div class="empty-state">
+  <p><strong>No subjects yet.</strong></p>
+  <p class="muted">Create one, then drop in its slides, transcripts, tutorials and past papers.</p>
+  <button type="button" class="primary" data-open-dialog="new-subject">+ New subject</button>
+</div>
+{% endif %}
+
+<dialog id="new-subject" class="dialog" {% if error %}data-open-on-load{% endif %}
+        aria-labelledby="new-subject-title">
+  <form method="post" action="/subjects" class="stack">
+    <div class="dialog-head">
+      <h2 id="new-subject-title">New subject</h2>
+      <button type="button" class="ghost" data-close-dialog aria-label="Close">✕</button>
+    </div>
+    {% if error %}<p class="form-error">{{ error }}</p>{% endif %}
+    <label>Name <input name="name" required maxlength="200" placeholder="e.g. Machine Learning"
+           value="{{ form.name or '' }}" autofocus></label>
+    <label>Code <input name="code" maxlength="32" placeholder="e.g. COMP30027"
+           value="{{ form.code or '' }}"></label>
+    <label>Semester <input name="semester" maxlength="32" placeholder="e.g. 2026 S2"
+           value="{{ form.semester or '' }}"></label>
+    <label>Teaching weeks
+      <input name="weeks" type="number" min="1" max="52" value="{{ form.weeks or 12 }}" required>
+    </label>
+    <div class="dialog-actions">
+      <button type="button" data-close-dialog>Cancel</button>
+      <button type="submit" class="primary">Create subject</button>
+    </div>
+  </form>
+</dialog>
+{% endblock %}
+{% block scripts %}
+<script>
+  document.querySelectorAll("[data-open-dialog]").forEach((btn) =>
+    btn.addEventListener("click", () => document.getElementById(btn.dataset.openDialog).showModal()));
+  document.querySelectorAll("dialog").forEach((dlg) => {
+    dlg.querySelectorAll("[data-close-dialog]").forEach((b) => b.addEventListener("click", () => dlg.close()));
+    // Click on the backdrop (outside the form) closes the dialog.
+    dlg.addEventListener("click", (e) => { if (e.target === dlg) dlg.close(); });
+    if (dlg.hasAttribute("data-open-on-load")) dlg.showModal();
+  });
+</script>
+{% endblock %}
