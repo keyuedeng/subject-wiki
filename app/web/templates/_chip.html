@@ -15,7 +15,7 @@
     {% if f.needs_review %}<span class="conf" title="Confidence of the guess">{{ "%.0f" | format(f.classify_confidence * 100) }}%</span>{% endif %}
   </div>
   <div class="chip-file">{{ f.filename }}</div>
-  {% if can_parse(f) %}<div class="chip-parse">{% with parse_view = "board" %}{% include "_parse_status.html" %}{% endwith %}</div>{% endif %}
+  {% if can_queue(f) %}<div class="chip-parse">{% with parse_view = "board" %}{% include "_parse_status.html" %}{% endwith %}</div>{% endif %}
   {% if note %}<div class="chip-note">{{ note }}</div>{% endif %}
   {% if f.needs_review or f.type == "reading" %}
   <div class="chip-actions">

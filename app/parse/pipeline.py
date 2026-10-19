@@ -13,11 +13,12 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
 
 import pymupdf
-from sqlalchemy import delete
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from app.classify.titles import document_title
 from app.classify.types import FileStatus, FileType
-from app.db.models import File, Slide
+from app.db.models import File, Slide, slide_id
 from app.llm.cache import CallResult, LlmCache, image_sha256, request_key
 from app.parse.dedupe import Duplicate, find_duplicates
 from app.parse.document import (
@@ -66,6 +67,8 @@ class Parser:
     storage: Storage
     vision_factory: Callable[[], VisionModel]
     concurrency: int = 4
+    # Called after a successful parse (e.g. to re-align transcripts paired with this deck).
+    on_parsed: Callable[[uuid.UUID], None] | None = None
 
     def parse(self, file_id: uuid.UUID) -> None:
         """Run a parse and record the outcome on the file; never raises."""
@@ -81,6 +84,8 @@ class Parser:
             self._set_status(file_id, FileStatus.FAILED, message[:500])
         else:
             self._set_status(file_id, FileStatus.PARSED, summary)
+            if self.on_parsed is not None:
+                self.on_parsed(file_id)
 
     # Steps
 
@@ -89,7 +94,7 @@ class Parser:
             file = db.get(File, file_id)
             if file is None:
                 raise ParseError("File no longer exists")
-            sha, ext, path = file.sha256, file.ext, file.storage_path
+            sha, ext, path, subject_id = file.sha256, file.ext, file.storage_path, file.subject_id
 
         deck = self._load_deck(sha, ext, self.storage.get(path))
         pages = deck.pages
@@ -106,9 +111,15 @@ class Parser:
         calls, errors = self._vision(file_id, deck, vision_pages, duplicates, pngs)
 
         with self.session_factory() as db:
-            self._write_slides(db, file_id, sha, deck, duplicates, decisions, calls)
+            self._write_slides(db, file_id, subject_id, sha, deck, duplicates, decisions, calls)
             file = db.get(File, file_id)
             file.page_count = len(pages)
+            # The parsed first pages name the deck better than the upload-time peek did.
+            first_titles = [
+                s.title for s in sorted(file.slides, key=lambda s: s.page_no)[:3] if s.title
+            ]
+            if title := document_title(first_titles, file.subject.code, file.subject.name):
+                file.title = title
             db.commit()
 
         if errors:
@@ -235,27 +246,33 @@ class Parser:
         self,
         db: Session,
         file_id: uuid.UUID,
+        subject_id: uuid.UUID,
         sha: str,
         deck: Deck,
         duplicates: dict[int, Duplicate],
         decisions: dict[int, Decision],
         calls: dict[int, PageCall],
     ) -> None:
-        db.execute(delete(Slide).where(Slide.file_id == file_id))
-        ids = {p.page_no: uuid.uuid4() for p in deck.pages}
+        """Rows are updated in place under derived ids (subject, sha256, page), so
+        anything pointing at a slide (transcript segments) survives a re-parse."""
+        ids = {p.page_no: slide_id(subject_id, sha, p.page_no) for p in deck.pages}
+        existing = {r.id: r for r in db.scalars(select(Slide).where(Slide.file_id == file_id))}
+        stale = [r for i, r in existing.items() if i not in ids.values()]
+        for r in stale:  # pages that no longer exist, or rows from before derived ids
+            db.delete(r)
+        db.flush()
         rows = []
         for page in deck.pages:
             n = page.page_no
-            row = Slide(
-                id=ids[n],
-                file_id=file_id,
-                page_no=n,
-                text_raw=page.text_raw,
-                notes=deck.notes.get(n),
-                route_signals=page.signals,
-                image_path=page_image_path(sha, n),
-                cached=False,
-            )
+            row = existing.get(ids[n]) or Slide(id=ids[n], file_id=file_id, page_no=n)
+            row.text_raw = page.text_raw
+            row.notes = deck.notes.get(n)
+            row.route_signals = page.signals
+            row.image_path = page_image_path(sha, n)
+            row.duplicate_of = None
+            row.model = row.prompt_version = row.request_hash = None
+            row.input_tokens = row.cached_input_tokens = row.output_tokens = 0
+            row.cost_usd, row.cached = None, False
             content = text_content(page)
             if n in duplicates:
                 dup = duplicates[n]
@@ -288,6 +305,7 @@ class Parser:
             rows.append(row)
         # Keepers before the pages pointing at them, for the self-referencing FK.
         db.add_all(sorted(rows, key=lambda r: r.duplicate_of is not None))
+        db.flush()
         db.flush()
 
     # Status

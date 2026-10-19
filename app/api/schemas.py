@@ -103,3 +103,32 @@ class SlideOut(BaseModel):
 class ParseQueued(BaseModel):
     queued: int
     file_ids: list[uuid.UUID]
+
+
+class SegmentOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    idx: int
+    start_ms: int | None
+    end_ms: int | None
+    raw_text: str
+    clean_text: str
+    clean_status: str
+    clean_note: str | None
+    low_conf_words: list
+    flags: list
+    slide_id: uuid.UUID | None
+    align_score: float | None
+    align_confidence: float | None
+    prompt_version: str | None
+    cost_usd: float | None
+    cached: bool
+
+
+class PairingIn(BaseModel):
+    slides_file_ids: list[uuid.UUID]
+
+
+class PairingOut(BaseModel):
+    slides_file_ids: list[uuid.UUID]
+    source: str | None

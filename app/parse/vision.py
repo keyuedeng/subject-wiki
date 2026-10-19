@@ -98,13 +98,17 @@ def user_text(text: str, build_captions: list[str]) -> str:
 
 
 class OpenAIVision:
+    """Slide vision on the shared provider (app/llm/client.py). The fingerprint is
+    unchanged from phase 2, so existing cache entries stay valid."""
+
     provider = "openai"
 
     def __init__(self, api_key: str | None, model: str, reasoning_effort: str):
+        from app.llm.client import OpenAIProvider
+
         self.model = model
         self.reasoning_effort = reasoning_effort
-        self._api_key = api_key
-        self._client = None  # created on the first real call, so lookups need no key
+        self._provider = OpenAIProvider(api_key)
 
     def fingerprint(self, png_sha256: str, text: str, build_captions: list[str]) -> dict:
         return {
@@ -120,56 +124,27 @@ class OpenAIVision:
             "max_output_tokens": MAX_OUTPUT_TOKENS,
         }
 
-    def _openai(self):
-        if self._client is None:
-            if not self._api_key:
-                raise VisionError("OPENAI_API_KEY is not set; it's needed for pages with diagrams")
-            from openai import OpenAI
-
-            self._client = OpenAI(api_key=self._api_key, max_retries=4, timeout=180)
-        return self._client
-
     def describe(self, png: bytes, text: str, build_captions: list[str]) -> VisionResult:
+        from app.llm.client import ProviderError
+
         image_url = "data:image/png;base64," + base64.b64encode(png).decode()
-        response = self._openai().responses.parse(
-            model=self.model,
-            instructions=SYSTEM_PROMPT,
-            input=[
-                {
-                    "role": "user",
-                    "content": [
-                        {"type": "input_image", "image_url": image_url, "detail": "high"},
-                        {"type": "input_text", "text": user_text(text, build_captions)},
-                    ],
-                }
-            ],
-            text_format=SlideContent,
-            reasoning={"effort": self.reasoning_effort},
-            max_output_tokens=MAX_OUTPUT_TOKENS,
-            prompt_cache_key=PROMPT_VERSION,  # same prefix on every page: route to one cache
-            store=False,
-        )
-        usage = response.usage
-        result_usage = Usage(
-            input_tokens=usage.input_tokens if usage else 0,
-            cached_tokens=usage.input_tokens_details.cached_tokens if usage else 0,
-            output_tokens=usage.output_tokens if usage else 0,
-            reasoning_tokens=usage.output_tokens_details.reasoning_tokens if usage else 0,
-        )
-        if response.status == "incomplete":
-            reason = getattr(response.incomplete_details, "reason", None) or "unknown"
-            raise VisionError(f"Model response incomplete ({reason})")
-        refusal = _refusal(response)
-        if refusal is not None:
-            return VisionResult(None, result_usage, response.model or self.model, refusal)
-        if response.output_parsed is None:
-            raise VisionError("Model returned no parseable output")
-        return VisionResult(response.output_parsed, result_usage, response.model or self.model)
-
-
-def _refusal(response) -> str | None:
-    for item in response.output or []:
-        for part in getattr(item, "content", None) or []:
-            if getattr(part, "type", None) == "refusal":
-                return part.refusal or "refused"
-    return None
+        try:
+            response = self._provider.structured(
+                model=self.model,
+                instructions=SYSTEM_PROMPT,
+                content=[
+                    {"type": "input_image", "image_url": image_url, "detail": "high"},
+                    {"type": "input_text", "text": user_text(text, build_captions)},
+                ],
+                schema=SlideContent,
+                effort=self.reasoning_effort,
+                max_output_tokens=MAX_OUTPUT_TOKENS,
+                cache_hint=PROMPT_VERSION,
+            )
+        except ProviderError as exc:
+            raise VisionError(str(exc)) from exc
+        u = response.usage
+        usage = Usage(u.input_tokens, u.cached_tokens, u.output_tokens, u.reasoning_tokens)
+        if response.parsed is None:
+            return VisionResult(None, usage, self.model, response.refusal)
+        return VisionResult(response.parsed, usage, self.model)

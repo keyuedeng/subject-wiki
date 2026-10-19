@@ -27,6 +27,13 @@ class Settings(BaseSettings):
     slides_reasoning_effort: str = "medium"
     parse_concurrency: int = 4
 
+    # Phase 3: transcripts. Cleaning model/effort, and the embedding model shared with
+    # phase 4 (1536 dims fits pgvector's index limit).
+    transcript_clean_model: str = "gpt-6.1-sol"
+    transcript_clean_effort: str = "low"
+    embedding_model: str = "text-embedding-3-large"
+    embedding_dimensions: int = 1536
+
     @field_validator("supabase_url")
     @classmethod
     def project_origin(cls, v: str) -> str:

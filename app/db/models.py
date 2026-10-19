@@ -21,6 +21,14 @@ from sqlalchemy.orm import Mapped, mapped_column, relationship
 from app.classify.types import LOW_CONFIDENCE, FileStatus, FileType
 from app.db.base import Base
 
+# Slide ids are derived, not random, so they survive re-parsing (and delete + re-upload
+# of the same file in the same subject); transcript segments point at them.
+SLIDE_ID_NAMESPACE = uuid.UUID("6f1c2a52-9d6e-4c1b-8f0e-2b7a5d0c9e11")
+
+
+def slide_id(subject_id: uuid.UUID, sha256: str, page_no: int) -> uuid.UUID:
+    return uuid.uuid5(SLIDE_ID_NAMESPACE, f"{subject_id}:{sha256}:{page_no}")
+
 
 def _in_list(column: str, values: type[FileType] | type[FileStatus]) -> str:
     return f"{column} IN ({', '.join(repr(v.value) for v in values)})"
@@ -164,3 +172,69 @@ class LlmCall(Base):
     output_tokens: Mapped[int] = mapped_column(default=0)
     cost_usd: Mapped[float | None] = mapped_column(Float)  # what the original call cost
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+TRANSCRIPT_FLAGS = ("exam_hint", "worked_example", "student_question", "admin")
+
+
+class TranscriptDeck(Base):
+    """Which slides file(s) a transcript belongs to, in order (a lecture can span two
+    decks). `source` is "auto" (by week/lecture number) or "manual" (set in the UI;
+    never replaced by auto-pairing)."""
+
+    __tablename__ = "transcript_decks"
+
+    transcript_file_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("files.id", ondelete="CASCADE"), primary_key=True
+    )
+    slides_file_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("files.id", ondelete="CASCADE"), primary_key=True
+    )
+    position: Mapped[int] = mapped_column(SmallInteger, default=0)
+    source: Mapped[str] = mapped_column(String(8), default="auto")
+
+    __table_args__ = (CheckConstraint("source IN ('auto', 'manual')", name="source_valid"),)
+
+
+class TranscriptSegment(Base):
+    """One window (~30-60 s) of a transcript: raw and cleaned text, flags, and the
+    slide it was aligned to (null = not matched to any slide)."""
+
+    __tablename__ = "transcript_segments"
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    file_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("files.id", ondelete="CASCADE"))
+    idx: Mapped[int] = mapped_column(SmallInteger)
+    start_ms: Mapped[int | None]
+    end_ms: Mapped[int | None]
+    raw_text: Mapped[str] = mapped_column(Text)
+    clean_text: Mapped[str] = mapped_column(Text)
+    clean_status: Mapped[str] = mapped_column(String(16))  # cleaned / rejected / failed
+    clean_note: Mapped[str | None] = mapped_column(Text)  # why a clean was rejected
+    low_conf_words: Mapped[list] = mapped_column(JsonType, default=list)
+    flags: Mapped[list] = mapped_column(JsonType, default=list)  # [{type, reason, quote}]
+
+    slide_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("slides.id", ondelete="SET NULL"), index=True
+    )
+    align_score: Mapped[float | None] = mapped_column(Float)  # cosine similarity
+    align_confidence: Mapped[float | None] = mapped_column(Float)  # posterior probability
+
+    model: Mapped[str | None] = mapped_column(String(64))
+    prompt_version: Mapped[str | None] = mapped_column(String(32))
+    request_hash: Mapped[str | None] = mapped_column(String(64))
+    input_tokens: Mapped[int] = mapped_column(default=0)
+    cached_input_tokens: Mapped[int] = mapped_column(default=0)
+    output_tokens: Mapped[int] = mapped_column(default=0)
+    cost_usd: Mapped[float | None] = mapped_column(Float)
+    cached: Mapped[bool] = mapped_column(default=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+    slide: Mapped["Slide | None"] = relationship()
+
+    __table_args__ = (
+        UniqueConstraint("file_id", "idx", name="uq_transcript_segments_file_idx"),
+        CheckConstraint(
+            "clean_status IN ('cleaned', 'rejected', 'failed')", name="clean_status_valid"
+        ),
+    )

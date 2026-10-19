@@ -32,7 +32,7 @@ def vision():
 @pytest.fixture
 def parse_client(client, session_factory, storage, vision):
     parser = Parser(session_factory, storage, lambda: vision)
-    app.dependency_overrides[get_queue] = lambda: ParseQueue(parser, InlineExecutor())
+    app.dependency_overrides[get_queue] = lambda: ParseQueue(parser, executor=InlineExecutor())
     return client
 
 
@@ -58,7 +58,7 @@ def test_parse_button_then_viewer(parse_client, vision):
     sid, fid = setup_subject(parse_client)
     table = parse_client.get(f"/subjects/{sid}?view=table").text
     assert f'hx-post="/files/{fid}/parse?view=row"' in table
-    assert "Parse 1 slide file" in table
+    assert "Process 1 file" in table
 
     row = parse_client.post(f"/files/{fid}/parse?view=row")
     assert row.status_code == 200 and "View 6 slides" in row.text

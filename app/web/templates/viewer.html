@@ -65,10 +65,30 @@
 </nav>
 
 <div class="viewer">
+  <div class="viewer-left">
   <figure class="viewer-image">
     <img src="/files/{{ file.id }}/pages/{{ slide.page_no }}.png" alt="Page {{ slide.page_no }} of {{ file.filename }}">
     <figcaption class="muted">Page {{ slide.page_no }} of {{ stats.pages }}</figcaption>
   </figure>
+
+  <section class="said" aria-labelledby="said-title">
+    <h3 id="said-title">What was said
+      {% if said %}<span class="muted">· {{ said | length }} part{{ "" if said | length == 1 else "s" }}</span>{% endif %}</h3>
+    {% if keeper %}<p class="hint">Page {{ slide.page_no }} is a build step of page {{ keeper.page_no }}; this is what was said while it was up.</p>{% endif %}
+    {% for seg, tfile in said %}
+    <div class="said-item {{ 'rejected' if seg.clean_status != 'cleaned' }}">
+      <div class="said-meta">
+        <a href="/files/{{ tfile.id }}/transcript#seg-{{ seg.idx }}">{{ seg.start_ms | clock }}{% if seg.end_ms is not none %}–{{ seg.end_ms | clock }}{% endif %}</a>
+        {% for fl in seg.flags %}<span class="flag flag-{{ fl.type }}" title="{{ fl.reason }}">{{ FLAG_LABELS[fl.type] }}</span>{% endfor %}
+        <span class="muted" title="Alignment confidence">{{ "%.0f" | format((seg.align_confidence or 0) * 100) }}%</span>
+      </div>
+      <p>{{ seg.clean_text }}</p>
+    </div>
+    {% else %}
+    <p class="muted">No transcript parts matched to this slide.</p>
+    {% endfor %}
+  </section>
+  </div>
 
   <section class="viewer-output">
     <div class="route">

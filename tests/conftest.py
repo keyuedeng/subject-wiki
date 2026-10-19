@@ -9,7 +9,7 @@ os.environ.setdefault("DATABASE_URL", "sqlite://")
 
 import pytest  # noqa: E402
 from fastapi.testclient import TestClient  # noqa: E402
-from sqlalchemy import create_engine  # noqa: E402
+from sqlalchemy import create_engine, event  # noqa: E402
 from sqlalchemy.orm import Session, sessionmaker  # noqa: E402
 from sqlalchemy.pool import StaticPool  # noqa: E402
 
@@ -59,6 +59,12 @@ def session_factory():
     engine = create_engine(
         "sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool
     )
+
+    # Enforce foreign keys (cascades, SET NULL) like Postgres does.
+    @event.listens_for(engine, "connect")
+    def _fk_on(dbapi_conn, _record):
+        dbapi_conn.execute("PRAGMA foreign_keys=ON")
+
     Base.metadata.create_all(engine)
     yield sessionmaker(bind=engine, expire_on_commit=False)
     engine.dispose()

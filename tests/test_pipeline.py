@@ -261,3 +261,15 @@ def test_missing_file_is_recorded_not_raised(db, make_parser):
 def test_subject_is_untouched_by_parse(db, slides_file, make_parser):
     make_parser(FakeVision()).parse(slides_file.id)
     assert db.scalar(select(Subject)).name == "Machine Learning"
+
+
+def test_deck_title_comes_from_parsed_first_page(db, storage, subject, make_parser):
+    deck = [{"title": "GRASP: OO Design with Responsibilities", "lines": ["Lecturer: Dr X"]},
+            {"title": "Learning Objectives", "lines": ["• Understand GRASP", "• Apply it",
+                                                       "• And more", "• Even more text"]},
+            text_page(1), text_page(2), text_page(3)]  # fmt: skip
+    file = ingest_upload(db, storage, subject, "Lecture 4.pdf", "application/pdf",
+                         make_deck(deck), max_bytes=50_000_000).file  # fmt: skip
+    make_parser(FakeVision()).parse(file.id)
+    db.refresh(file)
+    assert file.title == "GRASP: OO Design with Responsibilities"

@@ -133,11 +133,20 @@ class Board:
         return sum(row.completeness.complete for row in self.rows)
 
 
-def build_board(subject: Subject, files: list[File]) -> Board:
+def build_board(subject: Subject, files: list[File], pairs: dict | None = None) -> Board:
+    """`pairs`: transcript id -> ordered slides ids. A paired transcript is placed with
+    its first deck when that deck sits in a week's lectures."""
+    pairs = pairs or {}
     weeks = {w: {k: [] for k in WEEK_SLOT_KEYS} for w in range(1, subject.weeks + 1)}
     board = Board(weeks=weeks, subject={k: [] for k in SUBJECT_SLOT_KEYS}, readings=[])
-    for f in sorted(files, key=lambda f: (f.week or 0, f.lecture or 0, f.filename.lower())):
+    ordered = sorted(files, key=lambda f: (f.week or 0, f.lecture or 0, f.filename.lower()))
+    deck_place = {f.id: _place(f, subject) for f in ordered if f.type == T.SLIDES.value}
+    for f in ordered:
         place = _place(f, subject)
+        if f.type == T.TRANSCRIPT.value and pairs.get(f.id):
+            first = deck_place.get(pairs[f.id][0])
+            if first and first[0] == "lectures":
+                place = first
         if place is None:
             board.unsorted.append((f, _unsorted_reason(f, subject)))
         elif place == ("readings", None):
@@ -146,17 +155,31 @@ def build_board(subject: Subject, files: list[File]) -> Board:
             board.subject[place[0]].append(f)
         else:
             board.weeks[place[1]][place[0]].append(f)
-    board.rows = [_week_row(week, slots) for week, slots in board.weeks.items()]
+    board.rows = [_week_row(week, slots, pairs) for week, slots in board.weeks.items()]
     return board
 
 
-def group_lectures(files: list[File]) -> list[LectureGroup]:
-    """Pair slides with transcripts by lecture number. A transcript without a number
-    joins the week's only lecture; one unnumbered slides + transcript pair up."""
+def group_lectures(files: list[File], pairs: dict | None = None) -> list[LectureGroup]:
+    """Pair slides with transcripts: explicit pairings (`pairs`, transcript id -> slides
+    ids) first, then by lecture number. A transcript without a number joins the week's
+    only lecture; one unnumbered slides + transcript pair up."""
+    pairs = pairs or {}
+    by_id = {f.id: f for f in files}
+    paired_groups: dict = {}  # slides id -> LectureGroup
+    rest: list[File] = []
+    for f in files:
+        decks = [d for d in pairs.get(f.id, []) if d in by_id]
+        if f.type == T.TRANSCRIPT.value and decks:
+            deck = by_id[decks[0]]
+            group = paired_groups.setdefault(deck.id, LectureGroup(deck.lecture, slides=[deck]))
+            group.transcripts.append(f)
+    taken = {f.id for g in paired_groups.values() for f in g.files}
+    rest = [f for f in files if f.id not in taken]
+
     numbered: dict[int, LectureGroup] = {}
     loose_slides: list[File] = []
     loose_transcripts: list[File] = []
-    for f in files:
+    for f in rest:
         is_slides = f.type == T.SLIDES.value
         if f.lecture is None:
             (loose_slides if is_slides else loose_transcripts).append(f)
@@ -164,7 +187,10 @@ def group_lectures(files: list[File]) -> list[LectureGroup]:
         group = numbered.setdefault(f.lecture, LectureGroup(f.lecture))
         (group.slides if is_slides else group.transcripts).append(f)
 
-    groups = [numbered[n] for n in sorted(numbered)]
+    groups = sorted(
+        [*numbered.values(), *paired_groups.values()],
+        key=lambda g: (g.lecture is None, g.lecture or 0),
+    )
     if loose_transcripts and not loose_slides and len(groups) == 1:
         groups[0].transcripts += loose_transcripts
         loose_transcripts = []
@@ -175,8 +201,8 @@ def group_lectures(files: list[File]) -> list[LectureGroup]:
     return groups
 
 
-def _week_row(week: int, slots: dict[str, list[File]]) -> WeekRow:
-    lectures = group_lectures(slots["lectures"])
+def _week_row(week: int, slots: dict[str, list[File]], pairs: dict | None = None) -> WeekRow:
+    lectures = group_lectures(slots["lectures"], pairs)
     completeness = Completeness(
         slides=any(g.slides for g in lectures),
         lectures=len(lectures),

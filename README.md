@@ -3,7 +3,7 @@
 Turns a subject's scattered resources (slides, lecture transcripts, tutorials, past
 papers) into one searchable, cited knowledge base. See [docs/spec.md](docs/spec.md).
 
-**Status: phase 2, slide parsing (phase 1, upload and storage, is done).** You create a subject, drop in a
+**Status: phase 3, transcripts (phases 1–2, upload and slide parsing, are done).** You create a subject, drop in a
 semester of files, and each file is hashed, auto-classified (type, week, lecture,
 timestamps) and stored. You fix any wrong guesses on a week board or in a review table.
 Parsing, LLM calls, embeddings and search come in later phases.
@@ -92,9 +92,23 @@ Needs `OPENAI_API_KEY` in `.env` (see `.env.example`).
 
 ## Transcripts
 
-Prefer the **VTT** export from the lecture-capture tool. It keeps timestamps, which phase 3
-uses to align speech to slides, plus per-word confidence (`NOTE CONF` lines). Plain-text
-`.txt` transcripts are accepted too and recorded with `has_timestamps = false`.
+Prefer the **VTT** export from the lecture-capture tool. It keeps timestamps (used for
+pacing) and per-word confidence (`NOTE CONF` lines, used to point the cleaner at likely
+misheard words). Plain-text `.txt` transcripts work too, with `has_timestamps = false`.
+
+- **Pairing:** a transcript is paired automatically with the slides that have the same
+  lecture (and week) number. Otherwise open **View transcript** and pick the deck(s); a
+  lecture can cover two decks.
+- **Process** (or **Process N files** for the subject) cleans each ~45 s window: it
+  removes fillers and fixes misheard technical terms using a glossary from the slides,
+  and never adds content. It flags exam hints, worked examples, student questions and
+  admin, then matches each window to the slide being discussed. It costs about $0.27
+  for a 55-minute lecture, and $0 to re-run.
+- **Slide viewer:** "What was said" under each slide. **Transcript view:** the cleaned
+  transcript grouped by slide, with unmatched parts greyed out and a filter by flag.
+- **Checking alignment:** `uv run python -m scripts.align_labels <transcript>` writes a
+  sheet to fill in; `uv run python -m scripts.align_eval <sheet> --sweep` reports
+  accuracy.
 
 ## Development
 
@@ -113,6 +127,8 @@ app/
   storage/    Supabase Storage client
   classify/   filename + content rules (patterns.py), content peek, classifier
   parse/      slide parsing: measure, dedupe, route, text path, vision, pipeline
+  transcripts/ formats, windows, glossary, clean + flag, align, pairing, pipeline
+  llm/        provider interface and the request-hash cache for every model call
   jobs/       background parse queue
   services/   upload pipeline, file edits/deletes, week-board placement
   web/        Jinja templates, HTMX partials, upload.js, CSS

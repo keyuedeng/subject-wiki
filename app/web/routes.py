@@ -20,7 +20,8 @@ from app.classify import patterns
 from app.classify.titles import display_title
 from app.classify.types import FileType
 from app.config import get_settings
-from app.db.models import File, Slide, Subject
+from app.db.models import File, Slide, Subject, TranscriptSegment
+from app.jobs.worker import can_process_transcript, can_queue
 from app.parse.pipeline import can_parse
 from app.parse.vision import PROMPT_VERSION
 from app.services.board import (
@@ -33,6 +34,13 @@ from app.services.board import (
 )
 from app.services.files import FileEdit, apply_edit, apply_type, delete_file
 from app.storage.client import StorageError
+from app.transcripts.pairing import (
+    decks_for,
+    pairs_by_subject,
+    reset_to_auto,
+    set_manual,
+    sync_auto_pairs,
+)
 
 router = APIRouter(include_in_schema=False)
 templates = Jinja2Templates(directory=Path(__file__).parent / "templates")
@@ -69,10 +77,28 @@ def _render_markdown(text: str | None) -> str:
     return _markdown.render(_VISIBILITY_AFTER_BULLET.sub(r"\1\\\2", text or ""))
 
 
+def _clock(ms: int | None) -> str:
+    if ms is None:
+        return "–"
+    s = ms // 1000
+    return (
+        f"{s // 3600}:{s % 3600 // 60:02d}:{s % 60:02d}" if s >= 3600 else f"{s // 60}:{s % 60:02d}"
+    )
+
+
+templates.env.filters["clock"] = _clock
 templates.env.filters["file_title"] = _file_title
 templates.env.filters["markdown"] = _render_markdown
 templates.env.globals.update(
     can_parse=can_parse,
+    can_queue=can_queue,
+    FLAG_LABELS={
+        "exam_hint": "Exam hint",
+        "worked_example": "Worked example",
+        "student_question": "Student question",
+        "admin": "Admin",
+    },
+    is_transcript=can_process_transcript,
     FILE_TYPES=[t.value for t in FileType],
     SLOTS=SLOTS,
     WEEK_SLOT_KEYS=WEEK_SLOT_KEYS,
@@ -187,8 +213,8 @@ def parse_file(
     request: Request, file_id: uuid.UUID, db: DbSession, queue: QueueDep, view: str = "row"
 ) -> Response:
     file = file_or_404(db, file_id)
-    if not can_parse(file):
-        raise HTTPException(422, "Only slides (PDF or PPTX) can be parsed")
+    if not can_queue(file):
+        raise HTTPException(422, "Only slides (PDF, PPTX) and transcripts can be processed")
     queue.enqueue(db, [file])
     db.refresh(file)  # the worker may already have moved it on
     return _after_change(request, db, file, view)
@@ -208,9 +234,18 @@ def parse_subject(
 def file_row(request: Request, file_id: uuid.UUID, db: DbSession) -> HTMLResponse:
     """Polled by table rows while a file is parsing."""
     file = file_or_404(db, file_id)
-    return templates.TemplateResponse(
-        request, "_file_row.html", {"f": file, "subject": file.subject}
-    )
+    return _row(request, db, file)
+
+
+@router.get("/slides/{slide_id}")
+def slide_link(slide_id: uuid.UUID, db: DbSession) -> Response:
+    """Permalink to a slide. A collapsed build step or repeat resolves to the slide it
+    was collapsed into."""
+    slide = db.get(Slide, slide_id)
+    if slide is None:
+        raise HTTPException(404, "Slide not found")
+    kept = db.get(Slide, slide.duplicate_of) if slide.duplicate_of else slide
+    return RedirectResponse(f"/files/{kept.file_id}/slides?page={kept.page_no}", status_code=303)
 
 
 @router.get("/files/{file_id}/pages/{page_no}.png")
@@ -242,6 +277,13 @@ def slide_viewer(
     current = next((s for s in shown if s.page_no >= page), shown[-1])
     i = shown.index(current)
     by_id = {s.id: s for s in slides}
+    kept = by_id.get(current.duplicate_of) or current
+    said = db.execute(
+        select(TranscriptSegment, File)
+        .join(File, File.id == TranscriptSegment.file_id)
+        .where(TranscriptSegment.slide_id == kept.id)
+        .order_by(File.filename, TranscriptSegment.idx)
+    ).all()
     vision = [s for s in slides if s.route == "vision"]
     stats = {
         "pages": len(slides),
@@ -266,6 +308,7 @@ def slide_viewer(
             "slide": current,
             "content": current.content_json,
             "keeper": by_id.get(current.duplicate_of),
+            "said": said,
             "prev": shown[i - 1] if i > 0 else None,
             "next": shown[i + 1] if i + 1 < len(shown) else None,
             "only": only,
@@ -274,7 +317,121 @@ def slide_viewer(
     )
 
 
+# Transcripts
+
+
+@router.get("/files/{file_id}/transcript", response_class=HTMLResponse)
+def transcript_view(
+    request: Request, file_id: uuid.UUID, db: DbSession, show: str = "clean", flag: str = ""
+) -> HTMLResponse:
+    file = file_or_404(db, file_id)
+    if not can_process_transcript(file):
+        raise HTTPException(404, "Not a transcript")
+    sync_auto_pairs(db, file.subject_id)
+    decks = decks_for(db, file.id)
+    segments = list(
+        db.scalars(
+            select(TranscriptSegment)
+            .where(TranscriptSegment.file_id == file.id)
+            .order_by(TranscriptSegment.idx)
+        )
+    )
+    slides = {s.id: s for s in db.scalars(select(Slide).where(
+        Slide.id.in_({seg.slide_id for seg in segments if seg.slide_id})))}  # fmt: skip
+    deck_names = {}
+    for f, _ in decks:
+        deck_names[f.id] = _file_title(f, file.subject)
+    for s in slides.values():
+        if s.file_id not in deck_names:
+            deck_names[s.file_id] = _file_title(db.get(File, s.file_id), file.subject)
+    shown = [seg for seg in segments if not flag or any(f["type"] == flag for f in seg.flags)]
+    runs: list[dict] = []
+    for seg in shown:
+        if runs and runs[-1]["slide_id"] == seg.slide_id and not flag:
+            runs[-1]["segments"].append(seg)
+        else:
+            runs.append({"slide_id": seg.slide_id, "slide": slides.get(seg.slide_id),
+                         "segments": [seg]})  # fmt: skip
+    used_decks = {s.file_id for s in slides.values()}
+    paired = [f.id for f, _ in decks]
+    flag_counts = {}
+    for seg in segments:
+        for f in seg.flags:
+            flag_counts[f["type"]] = flag_counts.get(f["type"], 0) + 1
+    stats = {
+        "windows": len(segments),
+        "aligned": sum(seg.slide_id is not None for seg in segments),
+        "rejected": sum(seg.clean_status == "rejected" for seg in segments),
+        "this_run": sum(seg.cost_usd or 0 for seg in segments if not seg.cached),
+        "full_cost": sum(seg.cost_usd or 0 for seg in segments),
+        "cached": sum(seg.cached for seg in segments),
+        "prompt_versions": sorted({seg.prompt_version for seg in segments if seg.prompt_version}),
+    }
+    subject_decks = [f for f in _files(db, file.subject) if can_parse(f) and f.id not in paired]
+    return templates.TemplateResponse(
+        request,
+        "transcript.html",
+        {
+            "file": file,
+            "subject": file.subject,
+            "decks": decks,
+            "deck_names": deck_names,
+            "subject_decks": sorted(subject_decks, key=lambda f: f.filename.lower()),
+            "runs": runs,
+            "stats": stats,
+            "flag_counts": flag_counts,
+            "show": show,
+            "flag": flag,
+            # Processed against decks that are no longer the pairing: offer to re-run.
+            "stale_pairing": bool(segments) and bool(used_decks - set(paired)),
+        },
+    )
+
+
+@router.post("/files/{file_id}/pairing/{action}")
+def change_pairing(file_id: uuid.UUID, action: str, db: DbSession, form: FormData) -> Response:
+    file = file_or_404(db, file_id)
+    if not can_process_transcript(file):
+        raise HTTPException(404, "Not a transcript")
+    sync_auto_pairs(db, file.subject_id)  # so "add" keeps an automatic pairing
+    current = [f.id for f, _ in decks_for(db, file.id)]
+    if action == "reset":
+        reset_to_auto(db, file)
+    else:
+        try:
+            deck_id = uuid.UUID(form.get("slides_id", ""))
+        except ValueError as exc:
+            raise HTTPException(422, "Pick a slides file") from exc
+        deck = db.get(File, deck_id)
+        if deck is None or deck.subject_id != file.subject_id or not can_parse(deck):
+            raise HTTPException(422, "Pick a slides file from this subject")
+        if action == "add":
+            set_manual(db, file.id, [*current, deck_id])
+        elif action == "remove":
+            set_manual(db, file.id, [d for d in current if d != deck_id])
+        else:
+            raise HTTPException(404, "Unknown action")
+    return RedirectResponse(f"/files/{file.id}/transcript", status_code=303)
+
+
 # Helpers
+
+
+def _pair_names(db: DbSession, subject: Subject) -> dict:
+    """transcript id -> titles of its paired decks."""
+    files = {f.id: f for f in _files(db, subject)}
+    return {
+        t: [_file_title(files[d], subject) for d in decks if d in files]
+        for t, decks in pairs_by_subject(db, subject.id).items()
+    }
+
+
+def _row(request: Request, db: DbSession, file: File) -> HTMLResponse:
+    return templates.TemplateResponse(
+        request,
+        "_file_row.html",
+        {"f": file, "subject": file.subject, "pair_names": _pair_names(db, file.subject)},
+    )
 
 
 def _index(
@@ -296,7 +453,11 @@ def _index(
                 "subject": subject,
                 "files": len(files),
                 "review": sum(f.needs_review for f in files),
-                "complete_weeks": build_board(subject, files).complete_weeks if files else 0,
+                "complete_weeks": (
+                    build_board(subject, files, pairs_by_subject(db, subject.id)).complete_weeks
+                    if files
+                    else 0
+                ),
             }
         )
     return templates.TemplateResponse(
@@ -320,17 +481,23 @@ def _view_context(db: DbSession, subject: Subject, view: str) -> dict:
         "transcripts": sum(f.type == FileType.TRANSCRIPT for f in files),
         "timestamped": sum(f.has_timestamps for f in files),
         "slides": sum(can_parse(f) for f in files),
-        "unparsed": sum(can_parse(f) and f.status in ("uploaded", "failed") for f in files),
+        "unparsed": sum(can_queue(f) and f.status in ("uploaded", "failed") for f in files),
         "parsing": sum(f.status == "parsing" for f in files),
     }
-    context = {"subject": subject, "summary": summary, "view": view}
+    sync_auto_pairs(db, subject.id)
+    context = {
+        "subject": subject,
+        "summary": summary,
+        "view": view,
+        "pair_names": _pair_names(db, subject),
+    }
     if view == "table":
         files.sort(
             key=lambda f: (f.week is None, f.week or 0, f.lecture or 0, f.type, f.filename.lower())
         )
         context["files"] = files
     else:
-        context["board"] = build_board(subject, files)
+        context["board"] = build_board(subject, files, pairs_by_subject(db, subject.id))
     return context
 
 
@@ -342,9 +509,7 @@ def _render_view(request: Request, db: DbSession, subject: Subject, view: str) -
 
 def _after_change(request: Request, db: DbSession, file: File, view: str) -> HTMLResponse:
     if view == "row":
-        return templates.TemplateResponse(
-            request, "_file_row.html", {"f": file, "subject": file.subject}
-        )
+        return _row(request, db, file)
     return _render_view(request, db, file.subject, view)
 
 

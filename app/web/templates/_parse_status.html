@@ -1,18 +1,27 @@
-{#- Parse state of one file: a link to the viewer, progress, or a Parse button.
+{#- Processing state of one file: a link to its result, progress, or a button.
+    Slides are parsed; transcripts are processed (cleaned, flagged, aligned).
     Expects `f` and `parse_view` ("row" or "board"). -#}
-{% if can_parse(f) %}
+{% if can_queue(f) %}
+{% set transcript = is_transcript(f) %}
 <span class="parse parse-{{ f.status }}" {% if f.status_detail %}title="{{ f.status_detail }}"{% endif %}>
   {% if f.status == "parsed" %}
-    <a href="/files/{{ f.id }}/slides" class="parse-link">View {{ f.page_count or "" }} slides</a>
+    {% if transcript %}<a href="/files/{{ f.id }}/transcript" class="parse-link">View transcript</a>
+    {% else %}<a href="/files/{{ f.id }}/slides" class="parse-link">View {{ f.page_count or "" }} slides</a>{% endif %}
   {% elif f.status == "parsing" %}
-    <span class="spinner" aria-hidden="true"></span>{{ f.status_detail or "Parsing…" }}
+    <span class="spinner" aria-hidden="true"></span>{{ f.status_detail or "Working…" }}
   {% else %}
-    {% if f.status == "failed" %}<span class="parse-failed-label">Parse failed</span>{% endif %}
+    {% if f.status == "failed" %}<span class="parse-failed-label">{{ "Processing" if transcript else "Parse" }} failed</span>{% endif %}
     <button type="button" class="ghost small"
             hx-post="/files/{{ f.id }}/parse?view={{ parse_view }}"
             {% if parse_view == "board" %}hx-target="#view"{% endif %}>
-      {{ "Retry" if f.status == "failed" else "Parse" }}
+      {{ "Retry" if f.status == "failed" else ("Process" if transcript else "Parse") }}
     </button>
   {% endif %}
 </span>
+{% if transcript %}
+<span class="paired-with">
+  {% set names = (pair_names or {}).get(f.id) %}
+  {% if names %}with {{ names | join(" + ") }}{% else %}<a href="/files/{{ f.id }}/transcript">not paired</a>{% endif %}
+</span>
+{% endif %}
 {% endif %}

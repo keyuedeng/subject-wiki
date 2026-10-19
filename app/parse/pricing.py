@@ -25,6 +25,9 @@ PRICES: dict[str, Price] = {
     "gpt-5.4": Price(2.50, 0.25, 15.00),
     "gpt-5.4-mini": Price(0.75, 0.075, 4.50),
     "gpt-5.4-nano": Price(0.20, 0.02, 1.25),
+    # Embeddings: input only.
+    "text-embedding-3-large": Price(0.13, 0.13, 0.0),
+    "text-embedding-3-small": Price(0.02, 0.02, 0.0),
 }
 
 

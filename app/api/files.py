@@ -5,14 +5,24 @@ from fastapi import APIRouter, Form, HTTPException, Response, UploadFile
 from sqlalchemy import select
 
 from app.api.deps import DbSession, QueueDep, StorageDep, file_or_404, subject_or_404
-from app.api.schemas import FileOut, FileUpdate, ParseQueued, SlideOut, UploadOut
+from app.api.schemas import (
+    FileOut,
+    FileUpdate,
+    PairingIn,
+    PairingOut,
+    ParseQueued,
+    SegmentOut,
+    SlideOut,
+    UploadOut,
+)
 from app.config import get_settings
-from app.db.models import File, Slide
-from app.parse.pipeline import can_parse
+from app.db.models import File, Slide, TranscriptSegment
+from app.jobs.worker import can_process_transcript, can_queue
 from app.services.board import SlotError
 from app.services.files import FileEdit, apply_edit, delete_file
 from app.services.uploads import ingest_upload, rejection_reason
 from app.storage.client import StorageError
+from app.transcripts.pairing import decks_for, reset_to_auto, set_manual
 
 router = APIRouter(prefix="/api", tags=["files"])
 
@@ -87,8 +97,8 @@ def remove_file(file_id: uuid.UUID, db: DbSession, storage: StorageDep) -> Respo
 def parse_file(file_id: uuid.UUID, db: DbSession, queue: QueueDep) -> ParseQueued:
     """Queue a slides file for parsing. Unchanged pages reuse cached results (free)."""
     file = file_or_404(db, file_id)
-    if not can_parse(file):
-        raise HTTPException(400, "Only slides (PDF or PPTX) can be parsed")
+    if not can_queue(file):
+        raise HTTPException(400, "Only slides (PDF, PPTX) and transcripts can be processed")
     if file.status == "parsing":
         raise HTTPException(409, "Already parsing")
     queued = queue.enqueue(db, [file])
@@ -109,3 +119,47 @@ def parse_subject(subject_id: uuid.UUID, db: DbSession, queue: QueueDep) -> Pars
 @router.get("/files/{file_id}/slides", response_model=list[SlideOut])
 def list_slides(file_id: uuid.UUID, db: DbSession) -> list[Slide]:
     return file_or_404(db, file_id).slides
+
+
+@router.get("/files/{file_id}/segments", response_model=list[SegmentOut])
+def list_segments(file_id: uuid.UUID, db: DbSession) -> list[TranscriptSegment]:
+    file_or_404(db, file_id)
+    return list(
+        db.scalars(
+            select(TranscriptSegment)
+            .where(TranscriptSegment.file_id == file_id)
+            .order_by(TranscriptSegment.idx)
+        )
+    )
+
+
+@router.get("/files/{file_id}/pairing", response_model=PairingOut)
+def get_pairing(file_id: uuid.UUID, db: DbSession) -> PairingOut:
+    file = file_or_404(db, file_id)
+    decks = decks_for(db, file.id)
+    return PairingOut(
+        slides_file_ids=[f.id for f, _ in decks],
+        source=decks[0][1] if decks else None,
+    )
+
+
+@router.put("/files/{file_id}/pairing", response_model=PairingOut)
+def put_pairing(file_id: uuid.UUID, body: PairingIn, db: DbSession) -> PairingOut:
+    """Pair a transcript with these decks, in order (a manual pairing)."""
+    file = file_or_404(db, file_id)
+    if not can_process_transcript(file):
+        raise HTTPException(400, "Only transcripts can be paired")
+    for deck_id in body.slides_file_ids:
+        deck = db.get(File, deck_id)
+        if deck is None or deck.subject_id != file.subject_id or deck.type != "slides":
+            raise HTTPException(400, f"{deck_id} is not a slides file in this subject")
+    set_manual(db, file.id, body.slides_file_ids)
+    return get_pairing(file_id, db)
+
+
+@router.delete("/files/{file_id}/pairing", response_model=PairingOut)
+def reset_pairing(file_id: uuid.UUID, db: DbSession) -> PairingOut:
+    """Go back to automatic pairing by week and lecture number."""
+    file = file_or_404(db, file_id)
+    reset_to_auto(db, file)
+    return get_pairing(file_id, db)

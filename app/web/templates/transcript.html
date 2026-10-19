@@ -1,0 +1,114 @@
+{% extends "base.html" %}
+{% block title %}{{ file | file_title(subject) }} · Transcript · Subject Wiki{% endblock %}
+{% block content %}
+<nav class="crumbs">
+  <a href="/">Subjects</a> / <a href="/subjects/{{ subject.id }}">{{ subject.name }}</a> / Transcript
+</nav>
+<div class="viewer-head">
+  <div>
+    <h1>{{ file | file_title(subject) }}</h1>
+    <p class="muted">{{ file.filename }} · {{ "timestamped" if file.has_timestamps else "no timestamps" }}</p>
+  </div>
+  {% if file.status != "parsing" %}
+  <form method="post" action="/files/{{ file.id }}/parse?view=row"
+        hx-post="/files/{{ file.id }}/parse?view=row" hx-swap="none"
+        hx-on::after-request="location.reload()">
+    <button type="submit" class="small" title="Unchanged windows reuse saved results at no cost">
+      {{ "Process again" if stats.windows else "Process" }}</button>
+  </form>
+  {% endif %}
+</div>
+
+{% if file.status == "parsing" %}
+<p class="notice"><span class="spinner" aria-hidden="true"></span>{{ file.status_detail or "Working…" }}
+  <a href="">Refresh</a></p>
+{% elif file.status == "failed" %}
+<p class="notice error">Last run failed: {{ file.status_detail }}</p>
+{% endif %}
+{% if stale_pairing %}
+<p class="notice">The pairing changed since this was processed. Process again to clean and align against the new deck(s).</p>
+{% endif %}
+
+<section class="pairing panel">
+  <h2>Slides for this lecture</h2>
+  {% if decks %}
+  <ol class="pairing-list">
+    {% for deck, source in decks %}
+    <li>
+      <a href="/files/{{ deck.id }}/slides">{{ deck_names[deck.id] }}</a>
+      <span class="muted">{{ deck.filename }} · {{ "set by you" if source == "manual" else "matched by lecture number" }}</span>
+      <form method="post" action="/files/{{ file.id }}/pairing/remove" class="inline">
+        <input type="hidden" name="slides_id" value="{{ deck.id }}">
+        <button type="submit" class="ghost small" aria-label="Unpair {{ deck.filename }}">✕</button>
+      </form>
+    </li>
+    {% endfor %}
+  </ol>
+  {% else %}
+  <p class="muted">Not paired yet: no slides file has the same lecture number. Pick the deck(s) this lecture covered.</p>
+  {% endif %}
+  <div class="pairing-actions">
+    {% if subject_decks %}
+    <form method="post" action="/files/{{ file.id }}/pairing/add" class="inline">
+      <select name="slides_id" aria-label="Deck to add">
+        {% for d in subject_decks %}<option value="{{ d.id }}">{{ d | file_title(subject) }} · {{ d.filename }}</option>{% endfor %}
+      </select>
+      <button type="submit" class="small">{{ "Add another deck" if decks else "Pair" }}</button>
+    </form>
+    {% endif %}
+    {% if decks and decks[0][1] == "manual" %}
+    <form method="post" action="/files/{{ file.id }}/pairing/reset" class="inline">
+      <button type="submit" class="ghost small">Reset to automatic</button>
+    </form>
+    {% endif %}
+  </div>
+</section>
+
+{% if stats.windows %}
+<div class="viewer-stats">
+  <span>{{ stats.windows }} parts</span>
+  <span class="route-badge route-vision">{{ stats.aligned }} matched to slides</span>
+  <span class="route-badge route-text">{{ stats.windows - stats.aligned }} unmatched</span>
+  {% if stats.rejected %}<span class="pill warn" title="Cleaning added or dropped content, so the raw text was kept">{{ stats.rejected }} kept raw</span>{% endif %}
+  <span><strong>This run ${{ "%.2f" | format(stats.this_run) }}</strong> · full cost ${{ "%.2f" | format(stats.full_cost) }}</span>
+  <span class="muted">{{ stats.cached }} of {{ stats.windows }} cached · {{ stats.prompt_versions | join(", ") }}</span>
+</div>
+
+<nav class="viewer-nav transcript-filters" aria-label="Filter">
+  <a class="button {{ 'active' if not flag }}" href="?show={{ show }}">All</a>
+  {% for type, label in FLAG_LABELS.items() %}
+  <a class="button {{ 'active' if flag == type }}" href="?show={{ show }}&flag={{ type }}">{{ label }} <span class="muted">{{ flag_counts.get(type, 0) }}</span></a>
+  {% endfor %}
+  <a class="filter" href="?show={{ 'raw' if show == 'clean' else 'clean' }}{{ '&flag=' ~ flag if flag }}">
+    {{ "Show raw text" if show == "clean" else "Show cleaned text" }}</a>
+</nav>
+
+<div class="transcript">
+  {% for run in runs %}
+  <section class="run {{ 'unmatched' if not run.slide }}">
+    <header class="run-head">
+      {% if run.slide %}
+      <a href="/slides/{{ run.slide.id }}">Slide {{ run.slide.page_no }} · {{ run.slide.title or "Untitled" }}</a>
+      {% if decks | length > 1 %}<span class="muted">{{ deck_names.get(run.slide.file_id, "") }}</span>{% endif %}
+      {% else %}
+      <span>Not matched to a slide</span>
+      {% endif %}
+    </header>
+    {% for seg in run.segments %}
+    <div class="seg" id="seg-{{ seg.idx }}">
+      <div class="said-meta">
+        <span class="clock">{{ seg.start_ms | clock }}</span>
+        {% for fl in seg.flags %}<span class="flag flag-{{ fl.type }}" title="{{ fl.reason }}&#10;“{{ fl.quote }}”">{{ FLAG_LABELS[fl.type] }}</span>{% endfor %}
+        {% if seg.clean_status != "cleaned" %}<span class="pill warn" title="{{ seg.clean_note }}">raw kept</span>{% endif %}
+      </div>
+      <p>{{ seg.raw_text if show == "raw" else seg.clean_text }}</p>
+      {% if flag %}{% for fl in seg.flags if fl.type == flag %}<p class="flag-reason">{{ fl.reason }}</p>{% endfor %}{% endif %}
+    </div>
+    {% endfor %}
+  </section>
+  {% else %}
+  <p class="empty">Nothing matches this filter.</p>
+  {% endfor %}
+</div>
+{% endif %}
+{% endblock %}

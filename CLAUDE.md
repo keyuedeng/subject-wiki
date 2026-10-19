@@ -27,8 +27,19 @@ is `docs/spec.md`, which lists the phases under "Build plan".
 - **Known gaps:** the model sometimes copies the running header into its markdown.
   Section-divider collages go to vision (about $0.012 each); this was left as is on
   purpose.
-- **Not built yet:** transcript pipeline (phase 3), embeddings and search (phase 4).
-  pgvector is enabled but unused.
+- **Phase 3 is done: the transcript pipeline.** Checked on the real SWEN30006 GRASP
+  Part I lecture (55 min VTT, filed under Week 4 with its deck). 63 windows were cleaned
+  and flagged for $0.27; re-runs and deck re-parses cost $0.
+  - Alignment against a hand-made timeline: **74.6% exact / 88.9% within ±1** on all
+    windows, **79.4% / 91.2%** on non-boundary windows. Full write-up in `docs/eval.md`.
+  - Accuracy is good enough for now: **no more tuning or labelling** unless asked.
+  - Most remaining misses are one slide early (rough label times, plus lecturers
+    previewing the next slide).
+  - Known gap: "worked example" is flagged too broadly (analogies count). Tighten it in
+    the next cleaning-prompt change (that re-runs every window, about $0.27 per
+    lecture).
+- **Not built yet:** embeddings for search and retrieval (phase 4). pgvector is enabled
+  but unused.
 
 ## Commands
 
@@ -38,6 +49,15 @@ is `docs/spec.md`, which lists the phases under "Build plan".
 - `uv run ruff check . && uv run ruff format .`: lint and format (line length 100)
 - `uv run alembic upgrade head`: apply migrations to the database in `DATABASE_URL`
 - `uv run python -m scripts.setup_storage`: create the storage bucket if it's missing
+- `uv run python -m scripts.align_labels <transcript>`: write a blank alignment labelling
+  sheet to `docs/samples/` (`<transcript>` is a file id or part of the filename)
+- `uv run python -m scripts.timeline_labels <timeline.txt> <transcript>`: build that sheet
+  from a hand-made slide timeline (`mm.ss pN` lines), by majority overlap, marking
+  boundary windows
+- `uv run python -m scripts.align_eval <sheet.csv> [--sweep]`: alignment accuracy, and
+  optionally a sweep over penalty settings (cached embeddings, no API cost)
+- `uv run python -m scripts.compare_clean <transcript> --model gpt-6-luna --n 15`: compare
+  two cleaning models side by side in HTML
 
 ## Architecture and conventions
 
@@ -87,6 +107,12 @@ is `docs/spec.md`, which lists the phases under "Build plan".
 
 ## Paid model calls (all phases)
 
+- **Provider interface:** `app/llm/client.py`. `OpenAIProvider` makes raw calls
+  (`structured`, `embed`); `LlmClient` adds the cache. Use
+  `structured_request` / `call` / `store` when calls run in worker threads (only `call`
+  runs in the thread; database reads and writes stay on the main thread), or
+  `structured(...)` for one-off calls. `embed()` caches each text on its own and makes
+  only one call per batch of missing texts.
 - **Every LLM and embedding call goes through `app/llm/cache.py`.** Build a fingerprint
   dict of everything that determines the output: provider, model, full prompt text,
   schema and parameters, input text, and sha256 of any image (never the raw bytes).
@@ -133,6 +159,46 @@ is `docs/spec.md`, which lists the phases under "Build plan".
   with a warning rather than misaligned.
 - **Speaker notes** stay out of the model request and out of `content_json`.
 - **Model output** is rendered as markdown with raw HTML disabled.
+
+## Transcripts (phase 3)
+
+- **Pipeline:** `app/transcripts/` runs `formats` (VTT/SRT/TXT into cues, keeping
+  Echo360's per-word confidence), then `windows` (cues into sentences into windows of
+  30–60 s / 100–150 words, or words only without timestamps), then `clean` (one call per
+  window: cleaned text plus flags), then embeddings, then `align`, then
+  `transcript_segments` rows.
+  `TranscriptProcessor` runs in the same worker as slides; a deck that isn't parsed yet
+  is parsed first.
+- **Pairing:** `transcript_decks` holds one or more decks per transcript, in order. Auto
+  pairing matches lecture numbers, and weeks too when both have one. Manual pairing
+  (transcript view, or `PUT /api/files/{id}/pairing`) is never replaced; "reset" goes
+  back to automatic.
+- **Cleaning** (`clean-v1`): the glossary is built from the paired decks' slide text,
+  visual facts and speaker notes, with no model call (`glossary.py`). The request puts
+  the shared parts first (prompt, then glossary) so they get cached-input prices.
+  - Flags are judged on the raw text, and each quote is checked against it.
+  - Guards: at least 85% of cleaned words must come from the raw text or the glossary,
+    and exam-hint quotes must survive. Otherwise the raw text is kept and
+    `clean_status = rejected`.
+  - `[Other speaker]` marks speech from anyone but the main speaker.
+- **Alignment** (`align.py`, pure numpy): cosine similarity, centred per window, then
+  Viterbi over (slide, on or tangent) states with move penalties, then forward-backward
+  confidence. Low confidence or tangent leaves the window unaligned (`slide_id` null).
+  Targets are kept slides only; build steps and repeats resolve to their kept page.
+  - **Admin signal:** windows the cleaning pass flagged as admin score
+    `admin_tangent = 0.15` instead of `tangent = 0.04`, so intro and after-class talk
+    stays unaligned. Embeddings alone can't separate it from content. On GRASP this
+    was +9 points exact on non-boundary windows.
+  - The `AlignParams` defaults are measured, not guessed (`docs/eval.md`). Change them
+    only with a labelled lecture and `scripts.align_eval --sweep`. Treating repeat
+    pages as their own deck positions was tried and made things worse.
+- **Embedding model:** `text-embedding-3-large` at 1536 dimensions (`EMBEDDING_*`
+  settings), shared with phase 4.
+- **Slide ids are derived:** `uuid5(subject_id:sha256:page_no)` (`models.slide_id`).
+  Re-parsing updates rows in place, so transcript links survive. After a deck is
+  re-parsed, its paired transcripts are re-queued, which costs nothing unless slide
+  text changed. `/slides/{id}` resolves a collapsed page to its kept page.
+- **Decks take their title** from the parsed first pages.
 
 ## Supabase notes
 
