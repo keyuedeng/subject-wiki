@@ -3,7 +3,7 @@
 Turns a subject's scattered resources (slides, lecture transcripts, tutorials, past
 papers) into one searchable, cited knowledge base. See [docs/spec.md](docs/spec.md).
 
-**Status: phase 1, the upload site and storage.** You create a subject, drop in a
+**Status: phase 2, slide parsing (phase 1, upload and storage, is done).** You create a subject, drop in a
 semester of files, and each file is hashed, auto-classified (type, week, lecture,
 timestamps) and stored. You fix any wrong guesses on a week board or in a review table.
 Parsing, LLM calls, embeddings and search come in later phases.
@@ -68,6 +68,28 @@ Open http://127.0.0.1:8000. The JSON API is documented at http://127.0.0.1:8000/
 4. **Re-uploading is safe.** Files are deduplicated by SHA-256 within a subject, so
    dropping the same folder again changes nothing and each file shows "Already uploaded".
 
+## Parsing slides
+
+Slides files get a **Parse** button (in the table and on the board), and each subject
+has **Parse N slide files**. Parsing runs in the background; the status updates by
+itself.
+
+- Each page is read from the PDF's text layer for free, unless it has a diagram,
+  image or equations. Those pages go to the vision model (`SLIDES_MODEL`, default
+  `gpt-6.1-sol`, about $0.012 per page) together with the page image.
+- Build steps (bullets or a diagram revealed over several pages) and repeated pages are
+  collapsed first, so only the most complete page is sent.
+- **Re-parsing is free:** model results are cached by a hash of the full request
+  (image, text, prompt, model, settings), so only pages whose request changed are paid
+  for again.
+- **View N slides** opens a viewer: each page image next to its parsed output, the
+  route and why, tokens and cost, and the total cost per file. Use ← / → to move
+  between pages.
+- **PPTX** needs LibreOffice (`brew install --cask libreoffice`), or upload the PDF
+  export instead. Speaker notes are read from the PPTX.
+
+Needs `OPENAI_API_KEY` in `.env` (see `.env.example`).
+
 ## Transcripts
 
 Prefer the **VTT** export from the lecture-capture tool. It keeps timestamps, which phase 3
@@ -90,6 +112,8 @@ app/
   db/         SQLAlchemy models and session
   storage/    Supabase Storage client
   classify/   filename + content rules (patterns.py), content peek, classifier
+  parse/      slide parsing: measure, dedupe, route, text path, vision, pipeline
+  jobs/       background parse queue
   services/   upload pipeline, file edits/deletes, week-board placement
   web/        Jinja templates, HTMX partials, upload.js, CSS
 migrations/   Alembic migrations

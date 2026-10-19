@@ -31,12 +31,27 @@ class FakeStorage:
         self.puts += 1
         self.objects[path] = data
 
+    def get(self, path: str) -> bytes:
+        from app.storage.client import StorageNotFound
+
+        if path not in self.objects:
+            raise StorageNotFound(f"missing {path}")
+        return self.objects[path]
+
     def delete(self, path: str) -> None:
+        self.delete_many([path])
+
+    def delete_many(self, paths: list[str]) -> None:
         if self.fail_delete:
             from app.storage.client import StorageError
 
             raise StorageError("simulated failure")
-        self.objects.pop(path, None)
+        for path in paths:
+            self.objects.pop(path, None)
+
+    def list(self, prefix: str) -> list[str]:
+        folder = prefix.rstrip("/") + "/"
+        return [p for p in self.objects if p.startswith(folder) and "/" not in p[len(folder) :]]
 
 
 @pytest.fixture

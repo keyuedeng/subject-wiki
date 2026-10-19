@@ -3,4 +3,13 @@
   {% if summary.review %}· <span class="pill warn">{{ summary.review }} need{{ "s" if summary.review == 1 }} review</span>{% endif %}
   {% if summary.excluded %}· {{ summary.excluded }} excluded{% endif %}
   {% if summary.transcripts %}· {{ summary.timestamped }}/{{ summary.transcripts }} transcripts timestamped{% endif %}
+  {% if summary.parsing %}· <span class="spinner" aria-hidden="true"></span>parsing {{ summary.parsing }} file{{ "" if summary.parsing == 1 else "s" }}{% endif %}
+  {% if summary.unparsed %}
+  <button type="button" class="small parse-all" hx-post="/subjects/{{ subject.id }}/parse?view={{ view }}"
+          hx-target="#view">Parse {{ summary.unparsed }} slide file{{ "" if summary.unparsed == 1 else "s" }}</button>
+  {% endif %}
 </p>
+{#- While anything parses, refresh this view so statuses update. -#}
+{% if summary.parsing and view == "board" %}
+<div hidden hx-get="/subjects/{{ subject.id }}/view/board" hx-trigger="every 3s" hx-target="#view"></div>
+{% endif %}

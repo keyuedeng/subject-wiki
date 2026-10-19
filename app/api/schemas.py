@@ -54,6 +54,8 @@ class FileOut(BaseModel):
     reviewed: bool
     needs_review: bool
     status: str
+    status_detail: str | None
+    page_count: int | None
     created_at: datetime
 
 
@@ -74,3 +76,30 @@ class UploadOut(BaseModel):
     outcome: Literal["stored", "duplicate", "rejected"]
     message: str
     file: FileOut | None = None
+
+
+class SlideOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: uuid.UUID
+    page_no: int
+    title: str | None
+    route: Literal["text", "vision", "duplicate"]
+    route_reason: str
+    route_signals: dict
+    content_json: dict
+    notes: str | None
+    duplicate_of: uuid.UUID | None
+    image_path: str
+    model: str | None
+    prompt_version: str | None
+    input_tokens: int
+    cached_input_tokens: int
+    output_tokens: int
+    cost_usd: float | None
+    cached: bool
+
+
+class ParseQueued(BaseModel):
+    queued: int
+    file_ids: list[uuid.UUID]

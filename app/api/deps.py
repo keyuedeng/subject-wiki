@@ -6,10 +6,12 @@ from sqlalchemy.orm import Session
 
 from app.db.models import File, Subject
 from app.db.session import get_db
+from app.jobs.worker import ParseQueue, get_queue
 from app.storage.client import Storage, get_storage
 
 DbSession = Annotated[Session, Depends(get_db)]
 StorageDep = Annotated[Storage, Depends(get_storage)]
+QueueDep = Annotated[ParseQueue, Depends(get_queue)]
 
 
 def subject_or_404(db: Session, subject_id: uuid.UUID) -> Subject:

@@ -47,3 +47,18 @@ def test_display_title_prefers_document_then_filename_then_label():
     assert display_title(None, "Week3_L5.pdf", T.SLIDES, 3, 5) == "Lecture 5"
     assert display_title(None, "W4.pdf", T.TUTORIAL, 4, None) == "Week 4 tutorial"
     assert display_title(None, "W4.pdf", T.OTHER, 4, None) == "Untitled"
+
+
+@pytest.mark.parametrize(
+    ("raw", "fixed"),
+    [
+        ("A PPLYING G O F D ESIGN P ATTERNS – P ART 1", "APPLYING GOF DESIGN PATTERNS – PART 1"),
+        ("UML State Machine", "UML State Machine"),
+        ("I/O and A B testing", "I/O and A B testing"),  # not small caps: left alone
+        ("PART A", "PART A"),
+    ],
+)
+def test_fix_small_caps(raw, fixed):
+    from app.classify.titles import fix_small_caps
+
+    assert fix_small_caps(raw) == fixed

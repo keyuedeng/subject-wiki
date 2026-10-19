@@ -1,5 +1,6 @@
 <tr id="file-{{ f.id }}" class="{{ 'review' if f.needs_review }} {{ 'excluded' if not f.included }}"
-    hx-target="this" hx-swap="outerHTML">
+    hx-target="this" hx-swap="outerHTML"
+    {% if f.status == "parsing" %}hx-get="/files/{{ f.id }}/row" hx-trigger="every 2s"{% endif %}>
   <td class="name" title="{{ f.filename }}">
     <div class="name-title">{{ f | file_title(subject) }}</div>
     <div class="name-file">{{ f.filename }}</div>
@@ -36,6 +37,7 @@
     <span class="conf {{ 'low' if f.needs_review }}">{{ "%.0f" | format(f.classify_confidence * 100) }}%</span>
     <span class="reason">{{ "reviewed" if f.reviewed else f.classify_reason }}</span>
   </td>
+  <td class="nowrap">{% with parse_view = "row" %}{% include "_parse_status.html" %}{% endwith %}</td>
   <td class="nowrap actions">
     {% if f.needs_review %}
     <button type="button" class="ghost small" title="The guess is right"

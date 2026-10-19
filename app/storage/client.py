@@ -16,13 +16,30 @@ class StorageError(Exception):
     pass
 
 
+class StorageNotFound(StorageError):
+    pass
+
+
 class Storage(Protocol):
     def put(self, path: str, data: bytes, content_type: str) -> None: ...
+    def get(self, path: str) -> bytes: ...
     def delete(self, path: str) -> None: ...
+    def delete_many(self, paths: list[str]) -> None: ...
+    def list(self, prefix: str) -> list[str]: ...
 
 
 def object_path(subject_id: object, sha256: str, ext: str) -> str:
     return f"{subject_id}/{sha256}.{ext}" if ext else f"{subject_id}/{sha256}"
+
+
+def page_image_path(sha256: str, page_no: int) -> str:
+    """Rendered slide pages, keyed by file content so identical files share them."""
+    return f"pages/{sha256}/{page_no:04d}.png"
+
+
+def converted_pdf_path(sha256: str) -> str:
+    """PDF made from a PPTX by LibreOffice, keyed by the PPTX's content."""
+    return f"converted/{sha256}.pdf"
 
 
 class SupabaseStorage:
@@ -45,10 +62,39 @@ class SupabaseStorage:
         )
         _raise_for(response, f"upload {path}")
 
+    def get(self, path: str) -> bytes:
+        response = self._http.get(f"/object/{self.bucket}/{path}")
+        _raise_for(response, f"download {path}")
+        return response.content
+
     def delete(self, path: str) -> None:
-        # Deleting a missing object succeeds with an empty list, so this is idempotent.
-        response = self._http.request("DELETE", f"/object/{self.bucket}", json={"prefixes": [path]})
-        _raise_for(response, f"delete {path}")
+        self.delete_many([path])
+
+    def delete_many(self, paths: list[str]) -> None:
+        # Deleting missing objects succeeds with an empty list, so this is idempotent.
+        for i in range(0, len(paths), 500):
+            chunk = paths[i : i + 500]
+            response = self._http.request(
+                "DELETE", f"/object/{self.bucket}", json={"prefixes": chunk}
+            )
+            _raise_for(response, f"delete {len(chunk)} object(s)")
+
+    def list(self, prefix: str) -> list[str]:
+        """Full paths of the objects directly under `prefix/`."""
+        folder = prefix.rstrip("/")
+        names: list[str] = []
+        offset = 0
+        while True:
+            response = self._http.post(
+                f"/object/list/{self.bucket}",
+                json={"prefix": folder, "limit": 1000, "offset": offset},
+            )
+            _raise_for(response, f"list {folder}")
+            batch = [item["name"] for item in response.json() if item.get("id")]
+            names += [f"{folder}/{name}" for name in batch]
+            if len(response.json()) < 1000:
+                return names
+            offset += 1000
 
     def ensure_bucket(self, file_size_limit: int) -> bool:
         """Create the private bucket if it doesn't exist. Returns True if it was created."""
@@ -72,10 +118,14 @@ def _raise_for(response: httpx.Response, action: str) -> None:
         return
     # Supabase error bodies are short JSON messages; they never echo the key.
     try:
-        detail = response.json().get("message") or response.text
+        body = response.json()
+        detail = body.get("message") or response.text
     except ValueError:
-        detail = response.text
-    raise StorageError(f"Storage could not {action}: {response.status_code} {detail[:200]}")
+        body, detail = {}, response.text
+    # A missing object comes back as HTTP 400 with "statusCode": "404" in the body.
+    missing = response.status_code == 404 or str(body.get("statusCode")) == "404"
+    error = StorageNotFound if missing else StorageError
+    raise error(f"Storage could not {action}: {response.status_code} {detail[:200]}")
 
 
 @lru_cache

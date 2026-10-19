@@ -4,10 +4,11 @@ from typing import Annotated
 from fastapi import APIRouter, Form, HTTPException, Response, UploadFile
 from sqlalchemy import select
 
-from app.api.deps import DbSession, StorageDep, file_or_404, subject_or_404
-from app.api.schemas import FileOut, FileUpdate, UploadOut
+from app.api.deps import DbSession, QueueDep, StorageDep, file_or_404, subject_or_404
+from app.api.schemas import FileOut, FileUpdate, ParseQueued, SlideOut, UploadOut
 from app.config import get_settings
-from app.db.models import File
+from app.db.models import File, Slide
+from app.parse.pipeline import can_parse
 from app.services.board import SlotError
 from app.services.files import FileEdit, apply_edit, delete_file
 from app.services.uploads import ingest_upload, rejection_reason
@@ -80,3 +81,31 @@ def remove_file(file_id: uuid.UUID, db: DbSession, storage: StorageDep) -> Respo
     except StorageError as exc:
         raise HTTPException(502, str(exc)) from exc
     return Response(status_code=204)
+
+
+@router.post("/files/{file_id}/parse", response_model=ParseQueued, status_code=202)
+def parse_file(file_id: uuid.UUID, db: DbSession, queue: QueueDep) -> ParseQueued:
+    """Queue a slides file for parsing. Unchanged pages reuse cached results (free)."""
+    file = file_or_404(db, file_id)
+    if not can_parse(file):
+        raise HTTPException(400, "Only slides (PDF or PPTX) can be parsed")
+    if file.status == "parsing":
+        raise HTTPException(409, "Already parsing")
+    queued = queue.enqueue(db, [file])
+    return ParseQueued(queued=len(queued), file_ids=[f.id for f in queued])
+
+
+@router.post("/subjects/{subject_id}/parse", response_model=ParseQueued, status_code=202)
+def parse_subject(subject_id: uuid.UUID, db: DbSession, queue: QueueDep) -> ParseQueued:
+    """Queue every slides file that isn't parsed yet (or failed)."""
+    subject_or_404(db, subject_id)
+    files = db.scalars(
+        select(File).where(File.subject_id == subject_id, File.status.in_(["uploaded", "failed"]))
+    ).all()
+    queued = queue.enqueue(db, list(files))
+    return ParseQueued(queued=len(queued), file_ids=[f.id for f in queued])
+
+
+@router.get("/files/{file_id}/slides", response_model=list[SlideOut])
+def list_slides(file_id: uuid.UUID, db: DbSession) -> list[Slide]:
+    return file_or_404(db, file_id).slides

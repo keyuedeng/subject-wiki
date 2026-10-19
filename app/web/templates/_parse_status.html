@@ -1,0 +1,18 @@
+{#- Parse state of one file: a link to the viewer, progress, or a Parse button.
+    Expects `f` and `parse_view` ("row" or "board"). -#}
+{% if can_parse(f) %}
+<span class="parse parse-{{ f.status }}" {% if f.status_detail %}title="{{ f.status_detail }}"{% endif %}>
+  {% if f.status == "parsed" %}
+    <a href="/files/{{ f.id }}/slides" class="parse-link">View {{ f.page_count or "" }} slides</a>
+  {% elif f.status == "parsing" %}
+    <span class="spinner" aria-hidden="true"></span>{{ f.status_detail or "Parsing…" }}
+  {% else %}
+    {% if f.status == "failed" %}<span class="parse-failed-label">Parse failed</span>{% endif %}
+    <button type="button" class="ghost small"
+            hx-post="/files/{{ f.id }}/parse?view={{ parse_view }}"
+            {% if parse_view == "board" %}hx-target="#view"{% endif %}>
+      {{ "Retry" if f.status == "failed" else "Parse" }}
+    </button>
+  {% endif %}
+</span>
+{% endif %}

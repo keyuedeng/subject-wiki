@@ -1,0 +1,143 @@
+{% extends "base.html" %}
+{% block title %}{{ file | file_title(subject) }} · Slides · Subject Wiki{% endblock %}
+{% block content %}
+<nav class="crumbs">
+  <a href="/">Subjects</a> / <a href="/subjects/{{ subject.id }}">{{ subject.name }}</a> / {{ file | file_title(subject) }}
+</nav>
+<div class="viewer-head">
+  <div>
+    <h1>{{ file | file_title(subject) }}</h1>
+    <p class="muted">{{ file.filename }}</p>
+  </div>
+  {% if can_parse(file) and file.status != "parsing" %}
+  <form method="post" action="/files/{{ file.id }}/parse?view=row"
+        hx-post="/files/{{ file.id }}/parse?view=row" hx-swap="none"
+        hx-on::after-request="location.reload()">
+    <button type="submit" class="small" title="Unchanged pages reuse saved results at no cost">Re-parse</button>
+  </form>
+  {% endif %}
+</div>
+
+{% if file.status == "parsing" %}
+<p class="notice"><span class="spinner" aria-hidden="true"></span>{{ file.status_detail or "Parsing…" }}
+  <a href="">Refresh</a></p>
+{% elif file.status == "failed" %}
+<p class="notice error">Last parse failed: {{ file.status_detail }}</p>
+{% endif %}
+
+{% if not slide %}
+<p class="empty">Not parsed yet.</p>
+{% else %}
+<div class="viewer-stats">
+  <span>{{ stats.pages }} pages</span>
+  <span class="route-badge route-vision">{{ stats.vision }} vision</span>
+  <span class="route-badge route-text">{{ stats.text }} text</span>
+  <span class="route-badge route-duplicate">{{ stats.duplicate }} builds/repeats</span>
+  <span title="Model calls this parse made versus pages that reused saved results">
+    {{ stats.cached }} of {{ stats.vision }} vision pages cached</span>
+  <span><strong>This parse ${{ "%.2f" | format(stats.this_parse) }}</strong>
+    · full parse ${{ "%.2f" | format(stats.full_cost) }}{% if stats.unknown_price %} (some prices unknown){% endif %}</span>
+  <span class="muted">{{ stats.models | join(", ") or "no model calls" }}
+    · {{ stats.prompt_versions | join(", ") or stats.current_prompt }}</span>
+  {% if stats.prompt_versions and stats.prompt_versions != [stats.current_prompt] %}
+  <span class="pill warn" title="Re-parse to use the current prompt; pages are called again">
+    parsed with an older prompt ({{ stats.current_prompt }} is current)</span>
+  {% endif %}
+</div>
+
+<nav class="viewer-nav" aria-label="Pages">
+  {% set q = "&only=vision" if only == "vision" else "" %}
+  <a class="button {{ 'disabled' if not prev }}" id="prev" {% if prev %}href="?page={{ prev.page_no }}{{ q }}"{% endif %}>◀ Prev</a>
+  <form method="get" class="jump">
+    <select name="page" onchange="this.form.submit()" aria-label="Jump to page">
+      {% for s in slides %}
+      <option value="{{ s.page_no }}" {{ "selected" if s.page_no == slide.page_no }}>
+        {{ s.page_no }} · {{ {"vision": "◆", "text": "≡", "duplicate": "↺"}[s.route] }} {{ (s.title or "")[:50] }}
+      </option>
+      {% endfor %}
+    </select>
+    {% if only %}<input type="hidden" name="only" value="{{ only }}">{% endif %}
+  </form>
+  <a class="button {{ 'disabled' if not next }}" id="next" {% if next %}href="?page={{ next.page_no }}{{ q }}"{% endif %}>Next ▶</a>
+  <a class="filter" href="?page={{ slide.page_no }}{{ '' if only == 'vision' else '&only=vision' }}">
+    {{ "Show all pages" if only == "vision" else "Vision pages only" }}</a>
+  <span class="muted hint-keys">← → to move</span>
+</nav>
+
+<div class="viewer">
+  <figure class="viewer-image">
+    <img src="/files/{{ file.id }}/pages/{{ slide.page_no }}.png" alt="Page {{ slide.page_no }} of {{ file.filename }}">
+    <figcaption class="muted">Page {{ slide.page_no }} of {{ stats.pages }}</figcaption>
+  </figure>
+
+  <section class="viewer-output">
+    <div class="route">
+      <span class="route-badge route-{{ slide.route }}">{{ slide.route }}</span>
+      <span>{{ slide.route_reason }}</span>
+      {% if keeper %}<a href="?page={{ keeper.page_no }}">Go to page {{ keeper.page_no }} →</a>{% endif %}
+    </div>
+
+    <div class="md">{{ content.content_markdown | markdown | safe }}</div>
+
+    {% if content.visuals %}
+    <h3>Visuals ({{ content.visuals | length }})</h3>
+    {% for v in content.visuals %}
+    <div class="visual">
+      <span class="tag">{{ v.kind | replace("_", " ") }}</span>
+      <p>{{ v.description }}</p>
+      {% if v.key_facts %}
+      <ul class="facts">{% for fact in v.key_facts %}<li>{{ fact }}</li>{% endfor %}</ul>
+      {% endif %}
+    </div>
+    {% endfor %}
+    {% endif %}
+
+    {% if content.equations %}
+    <h3>Equations</h3>
+    {% for e in content.equations %}
+    <div class="equation"><span class="tex">{{ e.latex }}</span>
+      {% if e.context %}<span class="muted"> · {{ e.context }}</span>{% endif %}<code>{{ e.latex }}</code></div>
+    {% endfor %}
+    {% endif %}
+
+    {% if content.code_blocks %}
+    <h3>Code ({{ content.code_blocks | length }})</h3>
+    {% for c in content.code_blocks %}<pre class="code"><code>{{ c.code }}</code></pre>{% endfor %}
+    {% endif %}
+
+    {% if slide.notes %}<h3>Speaker notes</h3><p class="notes">{{ slide.notes }}</p>{% endif %}
+
+    <details class="raw">
+      <summary>Raw JSON, text layer and routing signals</summary>
+      <pre>{{ content | tojson(indent=2) }}</pre>
+      <pre>{{ slide.text_raw }}</pre>
+      <pre>{{ slide.route_signals | tojson(indent=2) }}</pre>
+    </details>
+
+    <p class="usage muted">
+      {% if slide.route == "vision" %}
+      {{ "{:,}".format(slide.input_tokens) }} in ({{ "{:,}".format(slide.cached_input_tokens) }} cached)
+      · {{ "{:,}".format(slide.output_tokens) }} out
+      · {% if slide.cost_usd is not none %}${{ "%.4f" | format(slide.cost_usd) }}{% else %}price unknown{% endif %}
+      {% if slide.cached %}<strong>(cached: $0 this parse)</strong>{% endif %}
+      · {{ slide.model }} · {{ slide.prompt_version }}
+      {% else %}No model call{% endif %}
+    </p>
+  </section>
+</div>
+{% endif %}
+{% endblock %}
+{% block scripts %}
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.css">
+<script src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.js"></script>
+<script>
+  document.querySelectorAll(".equation .tex").forEach((el) => {
+    try { katex.render(el.textContent, el, { throwOnError: false, displayMode: true }); } catch (_) {}
+  });
+  document.addEventListener("keydown", (e) => {
+    if (e.target.closest("input, select, textarea")) return;
+    const link = document.getElementById(e.key === "ArrowLeft" ? "prev" : e.key === "ArrowRight" ? "next" : "");
+    if (link && link.href) location.href = link.href;
+  });
+</script>
+{% endblock %}

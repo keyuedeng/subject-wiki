@@ -21,6 +21,12 @@ class Settings(BaseSettings):
     storage_bucket: str = "subject-files"
     max_upload_bytes: int = 50 * 1024 * 1024
 
+    # Phase 2: slide parsing. The key is only needed when a page takes the vision path.
+    openai_api_key: SecretStr | None = None
+    slides_model: str = "gpt-6.1-sol"
+    slides_reasoning_effort: str = "medium"
+    parse_concurrency: int = 4
+
     @field_validator("supabase_url")
     @classmethod
     def project_origin(cls, v: str) -> str:

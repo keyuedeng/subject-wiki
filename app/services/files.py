@@ -2,11 +2,12 @@
 
 from dataclasses import dataclass
 
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from app.classify.types import FileType
 from app.db.models import File
-from app.storage.client import Storage
+from app.storage.client import Storage, converted_pdf_path
 
 UNSET = object()
 
@@ -46,12 +47,21 @@ def apply_edit(file: File, edit: FileEdit) -> None:
 
 
 def delete_file(db: Session, storage: Storage, file: File) -> None:
-    """Delete the row and its object together: the row delete only commits once the
-    object is gone, so a storage failure leaves both in place."""
+    """Delete the row and its objects together: the row delete only commits once the
+    objects are gone, so a storage failure leaves everything in place. Rendered page
+    images and converted PDFs are shared by content, so they go only with the last file
+    that has it."""
+    sha = file.sha256
     db.delete(file)
     db.flush()
     try:
-        storage.delete(file.storage_path)
+        paths = [file.storage_path]
+        others = db.scalar(select(func.count()).select_from(File).where(File.sha256 == sha))
+        if not others:
+            paths += storage.list(f"pages/{sha}")
+            if file.ext == "pptx":
+                paths.append(converted_pdf_path(sha))
+        storage.delete_many(paths)
     except Exception:
         db.rollback()
         raise

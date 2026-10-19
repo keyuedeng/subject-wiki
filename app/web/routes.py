@@ -1,6 +1,7 @@
 """Server-rendered pages and HTMX partials. Logic lives in services/; these only render."""
 
 import json
+import re
 import uuid
 from datetime import datetime
 from pathlib import Path
@@ -9,16 +10,19 @@ from typing import Annotated
 from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import HTMLResponse, RedirectResponse, Response
 from fastapi.templating import Jinja2Templates
+from markdown_it import MarkdownIt
 from pydantic import ValidationError
 from sqlalchemy import select
 
-from app.api.deps import DbSession, StorageDep, file_or_404, subject_or_404
+from app.api.deps import DbSession, QueueDep, StorageDep, file_or_404, subject_or_404
 from app.api.schemas import SubjectCreate
 from app.classify import patterns
 from app.classify.titles import display_title
 from app.classify.types import FileType
 from app.config import get_settings
-from app.db.models import File, Subject
+from app.db.models import File, Slide, Subject
+from app.parse.pipeline import can_parse
+from app.parse.vision import PROMPT_VERSION
 from app.services.board import (
     SLOTS,
     SUBJECT_SLOT_KEYS,
@@ -55,8 +59,20 @@ def _file_title(f: File, subject: Subject | None) -> str:
 
 templates.env.filters["filesize"] = _filesize
 templates.env.filters["date"] = _date
+# Markdown from parsed slides: raw HTML disabled, so model output can't inject markup.
+_markdown = MarkdownIt("commonmark", {"html": False}).enable("table")
+# "- + getCode() : int": a UML visibility marker after a bullet would start a nested list.
+_VISIBILITY_AFTER_BULLET = re.compile(r"^(\s*[-*+]\s+)([+\-#~])(?=\s)", re.MULTILINE)
+
+
+def _render_markdown(text: str | None) -> str:
+    return _markdown.render(_VISIBILITY_AFTER_BULLET.sub(r"\1\\\2", text or ""))
+
+
 templates.env.filters["file_title"] = _file_title
+templates.env.filters["markdown"] = _render_markdown
 templates.env.globals.update(
+    can_parse=can_parse,
     FILE_TYPES=[t.value for t in FileType],
     SLOTS=SLOTS,
     WEEK_SLOT_KEYS=WEEK_SLOT_KEYS,
@@ -163,6 +179,101 @@ def remove_file(
     return _render_view(request, db, subject, view)
 
 
+# Slide parsing
+
+
+@router.post("/files/{file_id}/parse", response_class=HTMLResponse)
+def parse_file(
+    request: Request, file_id: uuid.UUID, db: DbSession, queue: QueueDep, view: str = "row"
+) -> Response:
+    file = file_or_404(db, file_id)
+    if not can_parse(file):
+        raise HTTPException(422, "Only slides (PDF or PPTX) can be parsed")
+    queue.enqueue(db, [file])
+    db.refresh(file)  # the worker may already have moved it on
+    return _after_change(request, db, file, view)
+
+
+@router.post("/subjects/{subject_id}/parse", response_class=HTMLResponse)
+def parse_subject(
+    request: Request, subject_id: uuid.UUID, db: DbSession, queue: QueueDep, view: str = "board"
+) -> Response:
+    subject = subject_or_404(db, subject_id)
+    files = [f for f in _files(db, subject) if f.status in ("uploaded", "failed")]
+    queue.enqueue(db, files)
+    return _render_view(request, db, subject, view)
+
+
+@router.get("/files/{file_id}/row", response_class=HTMLResponse)
+def file_row(request: Request, file_id: uuid.UUID, db: DbSession) -> HTMLResponse:
+    """Polled by table rows while a file is parsing."""
+    file = file_or_404(db, file_id)
+    return templates.TemplateResponse(
+        request, "_file_row.html", {"f": file, "subject": file.subject}
+    )
+
+
+@router.get("/files/{file_id}/pages/{page_no}.png")
+def page_image(file_id: uuid.UUID, page_no: int, db: DbSession, storage: StorageDep) -> Response:
+    """Rendered pages, served through the app so the bucket stays private."""
+    slide = db.scalar(select(Slide).where(Slide.file_id == file_id, Slide.page_no == page_no))
+    if slide is None:
+        raise HTTPException(404, "Page not found")
+    try:
+        png = storage.get(slide.image_path)
+    except StorageError as exc:
+        raise HTTPException(502, str(exc)) from exc
+    # Content-addressed, so the bytes for this URL never change.
+    return Response(png, media_type="image/png", headers={"Cache-Control": "max-age=86400"})
+
+
+@router.get("/files/{file_id}/slides", response_class=HTMLResponse)
+def slide_viewer(
+    request: Request, file_id: uuid.UUID, db: DbSession, page: int = 1, only: str = ""
+) -> HTMLResponse:
+    file = file_or_404(db, file_id)
+    slides = file.slides
+    if not slides:
+        return templates.TemplateResponse(
+            request, "viewer.html", {"file": file, "subject": file.subject, "slide": None}
+        )
+    shown = [s for s in slides if s.route == "vision"] if only == "vision" else slides
+    shown = shown or slides
+    current = next((s for s in shown if s.page_no >= page), shown[-1])
+    i = shown.index(current)
+    by_id = {s.id: s for s in slides}
+    vision = [s for s in slides if s.route == "vision"]
+    stats = {
+        "pages": len(slides),
+        "vision": len(vision),
+        "text": sum(s.route == "text" for s in slides),
+        "duplicate": sum(s.route == "duplicate" for s in slides),
+        "cached": sum(s.cached for s in vision),
+        "this_parse": sum(s.cost_usd or 0 for s in vision if not s.cached),
+        "full_cost": sum(s.cost_usd or 0 for s in vision),
+        "unknown_price": any(s.cost_usd is None for s in vision),
+        "models": sorted({s.model for s in vision if s.model}),
+        "prompt_versions": sorted({s.prompt_version for s in vision if s.prompt_version}),
+        "current_prompt": PROMPT_VERSION,
+    }
+    return templates.TemplateResponse(
+        request,
+        "viewer.html",
+        {
+            "file": file,
+            "subject": file.subject,
+            "slides": slides,
+            "slide": current,
+            "content": current.content_json,
+            "keeper": by_id.get(current.duplicate_of),
+            "prev": shown[i - 1] if i > 0 else None,
+            "next": shown[i + 1] if i + 1 < len(shown) else None,
+            "only": only,
+            "stats": stats,
+        },
+    )
+
+
 # Helpers
 
 
@@ -208,6 +319,9 @@ def _view_context(db: DbSession, subject: Subject, view: str) -> dict:
         "excluded": sum(not f.included for f in files),
         "transcripts": sum(f.type == FileType.TRANSCRIPT for f in files),
         "timestamped": sum(f.has_timestamps for f in files),
+        "slides": sum(can_parse(f) for f in files),
+        "unparsed": sum(can_parse(f) and f.status in ("uploaded", "failed") for f in files),
+        "parsing": sum(f.status == "parsing" for f in files),
     }
     context = {"subject": subject, "summary": summary, "view": view}
     if view == "table":

@@ -17,6 +17,7 @@ class FileType(StrEnum):
 
 class FileStatus(StrEnum):
     UPLOADED = "uploaded"
+    PARSING = "parsing"
     PARSED = "parsed"
     FAILED = "failed"
 

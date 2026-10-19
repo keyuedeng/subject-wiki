@@ -2,6 +2,7 @@ import uuid
 from datetime import datetime
 
 from sqlalchemy import (
+    JSON,
     BigInteger,
     CheckConstraint,
     DateTime,
@@ -14,6 +15,7 @@ from sqlalchemy import (
     Uuid,
     func,
 )
+from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.classify.types import LOW_CONFIDENCE, FileStatus, FileType
@@ -71,6 +73,7 @@ class File(Base):
 
     status: Mapped[str] = mapped_column(String(16), default=FileStatus.UPLOADED.value)
     status_detail: Mapped[str | None] = mapped_column(Text)
+    page_count: Mapped[int | None] = mapped_column(SmallInteger)
 
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(
@@ -78,6 +81,12 @@ class File(Base):
     )
 
     subject: Mapped[Subject] = relationship(back_populates="files")
+    slides: Mapped[list["Slide"]] = relationship(
+        back_populates="file",
+        cascade="all, delete-orphan",
+        passive_deletes=True,
+        order_by="Slide.page_no",
+    )
 
     __table_args__ = (
         UniqueConstraint("subject_id", "sha256", name="uq_files_subject_sha256"),
@@ -91,3 +100,67 @@ class File(Base):
     @property
     def needs_review(self) -> bool:
         return not self.reviewed and self.classify_confidence < LOW_CONFIDENCE
+
+
+# JSONB on Postgres, plain JSON elsewhere (tests run on SQLite).
+JsonType = JSON().with_variant(JSONB(), "postgresql")
+
+ROUTES = ("text", "vision", "duplicate")
+
+
+class Slide(Base):
+    """One parsed page of a slides file."""
+
+    __tablename__ = "slides"
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    file_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("files.id", ondelete="CASCADE"))
+    page_no: Mapped[int] = mapped_column(SmallInteger)
+    title: Mapped[str | None] = mapped_column(Text)
+    text_raw: Mapped[str] = mapped_column(Text)
+    notes: Mapped[str | None] = mapped_column(Text)  # PPTX speaker notes
+    content_json: Mapped[dict] = mapped_column(JsonType)
+    route: Mapped[str] = mapped_column(String(16))
+    route_reason: Mapped[str] = mapped_column(Text)
+    route_signals: Mapped[dict] = mapped_column(JsonType)
+    image_path: Mapped[str] = mapped_column(Text)
+    duplicate_of: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("slides.id", ondelete="SET NULL")
+    )
+    model: Mapped[str | None] = mapped_column(String(64))
+    prompt_version: Mapped[str | None] = mapped_column(String(32))
+    request_hash: Mapped[str | None] = mapped_column(String(64))  # -> llm_cache
+    input_tokens: Mapped[int] = mapped_column(default=0)
+    cached_input_tokens: Mapped[int] = mapped_column(default=0)
+    output_tokens: Mapped[int] = mapped_column(default=0)
+    # Tokens and cost of the call that produced content_json (0 on the text path).
+    # cached=True means this parse reused that result and was not charged again.
+    cost_usd: Mapped[float | None] = mapped_column(Float)
+    cached: Mapped[bool] = mapped_column(default=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+    file: Mapped[File] = relationship(back_populates="slides")
+
+    __table_args__ = (
+        UniqueConstraint("file_id", "page_no", name="uq_slides_file_page"),
+        CheckConstraint(f"route IN ({', '.join(repr(r) for r in ROUTES)})", name="route_valid"),
+    )
+
+
+class LlmCall(Base):
+    """One paid model call (LLM or embedding), keyed by a hash of its full request.
+    See app/llm/cache.py. Survives file deletes and is shared across subjects."""
+
+    __tablename__ = "llm_cache"
+
+    request_hash: Mapped[str] = mapped_column(String(64), primary_key=True)
+    kind: Mapped[str] = mapped_column(String(32))  # e.g. slide_vision, transcript_clean
+    provider: Mapped[str] = mapped_column(String(32))
+    model: Mapped[str] = mapped_column(String(64))
+    prompt_version: Mapped[str | None] = mapped_column(String(32))  # reporting only
+    response_json: Mapped[dict] = mapped_column(JsonType)
+    input_tokens: Mapped[int] = mapped_column(default=0)
+    cached_input_tokens: Mapped[int] = mapped_column(default=0)
+    output_tokens: Mapped[int] = mapped_column(default=0)
+    cost_usd: Mapped[float | None] = mapped_column(Float)  # what the original call cost
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())

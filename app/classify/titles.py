@@ -55,7 +55,21 @@ def _strip_subject(text: str, subject_code: str | None, subject_name: str | None
     return text
 
 
+# Small caps extracted from PDFs: "A PPLYING G O F D ESIGN" -> "APPLYING GOF DESIGN".
+_SMALL_CAPS_SPLIT = re.compile(r"\b([A-Z]) (?=[A-Z]{2,}\b)")
+_SPACED_CAPITALS = re.compile(r"\b[A-Z](?: [A-Z]\b)+")
+
+
+def fix_small_caps(text: str) -> str:
+    """Only for all-caps lines, which is how small caps come out of a PDF."""
+    if text.upper() != text or not _SMALL_CAPS_SPLIT.search(text):
+        return text
+    text = _SMALL_CAPS_SPLIT.sub(r"\1", text)
+    return _SPACED_CAPITALS.sub(lambda m: m.group(0).replace(" ", ""), text)
+
+
 def _tidy(text: str) -> str:
+    text = fix_small_caps(text)
     text = _NUMBER_TOKENS.sub(" ", text)
     text = " ".join(text.split())
     text = _EDGE_PUNCT.sub("", text)
@@ -113,4 +127,6 @@ def display_title(
     lecture: int | None,
     subject_code: str | None = None,
 ) -> str:
-    return title or filename_title(filename, subject_code) or fallback_title(ftype, week, lecture)
+    if title:
+        return fix_small_caps(title)  # titles stored before the fix
+    return filename_title(filename, subject_code) or fallback_title(ftype, week, lecture)
