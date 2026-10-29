@@ -1,15 +1,14 @@
-<p class="summary">
-  {{ summary.total }} file{{ "" if summary.total == 1 else "s" }}
-  {% if summary.review %}· <span class="pill warn">{{ summary.review }} need{{ "s" if summary.review == 1 }} review</span>{% endif %}
-  {% if summary.excluded %}· {{ summary.excluded }} excluded{% endif %}
-  {% if summary.transcripts %}· {{ summary.timestamped }}/{{ summary.transcripts }} transcripts timestamped{% endif %}
-  {% if summary.parsing %}· <span class="spinner" aria-hidden="true"></span>parsing {{ summary.parsing }} file{{ "" if summary.parsing == 1 else "s" }}{% endif %}
+{#- Processing work waiting or under way. While anything parses, refresh the board. -#}
+{% if summary.unparsed or summary.parsing %}
+<div class="work-notice">
+  {% if summary.parsing %}<span><span class="spinner" aria-hidden="true"></span>Processing {{ summary.parsing }} file{{ "" if summary.parsing == 1 else "s" }}…</span>{% endif %}
   {% if summary.unparsed %}
-  <button type="button" class="small parse-all" hx-post="/subjects/{{ subject.id }}/parse?view={{ view }}"
-          hx-target="#view">Process {{ summary.unparsed }} file{{ "" if summary.unparsed == 1 else "s" }}</button>
+  <span>{{ summary.unparsed }} file{{ " is" if summary.unparsed == 1 else "s are" }} ready to process.</span>
+  <button type="button" class="btn-small" hx-post="/subjects/{{ subject.id }}/parse?view={{ view }}"
+          hx-target="#view">Process {{ "it" if summary.unparsed == 1 else "all" }}</button>
   {% endif %}
-</p>
-{#- While anything parses, refresh this view so statuses update. -#}
+</div>
+{% endif %}
 {% if summary.parsing and view == "board" %}
 <div hidden hx-get="/subjects/{{ subject.id }}/view/board" hx-trigger="every 3s" hx-target="#view"></div>
 {% endif %}

@@ -1,0 +1,15 @@
+{#- A question. Expects `q` (a ChatMessage). -#}
+{%- set weeks = (q.filters or {}).get("weeks") or [] -%}
+{%- set types = (q.filters or {}).get("types") or [] -%}
+<div class="msg msg-user">
+  <div class="bubble">{{ q.content }}</div>
+  {% if q.mode == "where" or weeks or types %}
+  <div class="bubble-meta">
+    {%- set parts = [] -%}
+    {%- if q.mode == "where" %}{% set _ = parts.append("Where is it taught?") %}{% endif -%}
+    {%- if weeks %}{% set _ = parts.append(weeks_phrase(weeks) | capitalize) %}{% endif -%}
+    {%- for t in types %}{% set _ = parts.append(SOURCE_TYPES.get(t, t)) %}{% endfor -%}
+    {{ parts | join(" · ") }}
+  </div>
+  {% endif %}
+</div>

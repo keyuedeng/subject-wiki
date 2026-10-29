@@ -58,10 +58,11 @@ def test_parse_button_then_viewer(parse_client, vision):
     sid, fid = setup_subject(parse_client)
     table = parse_client.get(f"/subjects/{sid}?view=table").text
     assert f'hx-post="/files/{fid}/parse?view=row"' in table
-    assert "Process 1 file" in table
+    assert "1 file is ready to process" in table
 
     row = parse_client.post(f"/files/{fid}/parse?view=row")
-    assert row.status_code == 200 and "View 6 slides" in row.text
+    assert row.status_code == 200 and "6 slides · parsed" in row.text
+    assert f'href="/files/{fid}/slides"' in row.text
     assert len(vision.calls) == 1
 
     viewer = parse_client.get(f"/files/{fid}/slides?page=4")

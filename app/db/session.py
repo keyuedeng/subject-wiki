@@ -34,3 +34,9 @@ def get_db() -> Iterator[Session]:
         yield db
     finally:
         db.close()
+
+
+def get_session_factory() -> sessionmaker[Session]:
+    """FastAPI dependency for work that outlives the request's session (a streamed answer
+    is written by a worker thread)."""
+    return _session_factory()

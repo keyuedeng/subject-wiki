@@ -2,8 +2,14 @@
 
 A slot accepts a set of types. Dropping (or moving) a file into a slot keeps its
 type if the slot accepts it, otherwise switches to the slot's default type.
+
+Each week shows four columns: Lecture (decks), Lecture transcript (beside the deck it's
+paired with), Tutorial (questions and solutions grouped per tutorial) and Other. Missing
+solutions are never a gap: a week is complete with slides, a transcript for every lecture,
+and a tutorial.
 """
 
+import re
 from dataclasses import dataclass, field
 
 from app.classify import patterns as p
@@ -24,7 +30,17 @@ SLOTS = {
     s.key: s
     for s in [
         Slot("lectures", "Lectures", frozenset({T.SLIDES, T.TRANSCRIPT}), T.SLIDES, True),
-        Slot("tutorials", "Tutorials", frozenset({T.TUTORIAL}), T.TUTORIAL, True),
+        # Drop targets only: a transcript is shown beside its deck, so it's stored in
+        # "lectures"; "week" takes anything dropped on a week with nothing in it yet.
+        Slot("transcripts", "Lecture transcript", frozenset({T.TRANSCRIPT}), T.TRANSCRIPT, True),
+        Slot(
+            "week",
+            "Week",
+            frozenset({T.SLIDES, T.TRANSCRIPT, T.TUTORIAL, T.SOLUTIONS, T.OTHER}),
+            T.OTHER,
+            True,
+        ),  # fmt: skip
+        Slot("tutorials", "Tutorial", frozenset({T.TUTORIAL, T.SOLUTIONS}), T.TUTORIAL, True),
         Slot("solutions", "Solutions", frozenset({T.SOLUTIONS}), T.SOLUTIONS, True),
         Slot("week_other", "Other", frozenset({T.OTHER}), T.OTHER, True),
         Slot("outline", "Outline", frozenset({T.OUTLINE}), T.OUTLINE, False),
@@ -41,7 +57,8 @@ SLOTS = {
         ),
     ]
 }
-WEEK_SLOT_KEYS = [k for k, s in SLOTS.items() if s.weekly]
+# The slots a week's files are stored under (the other weekly slots are drop targets).
+WEEK_SLOT_KEYS = ["lectures", "tutorials", "week_other"]
 SUBJECT_SLOT_KEYS = ["outline", "exams", "subject_other"]
 
 
@@ -84,12 +101,63 @@ class LectureGroup:
 
 
 @dataclass
+class TutorialGroup:
+    """A tutorial's questions and its solutions (either may be missing)."""
+
+    tutorials: list[File] = field(default_factory=list)
+    solutions: list[File] = field(default_factory=list)
+
+    @property
+    def files(self) -> list[File]:
+        return self.tutorials + self.solutions
+
+    @property
+    def primary(self) -> File:
+        return (self.tutorials or self.solutions)[0]
+
+
+_NUMBER_RE = re.compile(r"(?<![a-z\d])0*(\d{1,2})(?!\d)")
+
+
+def _numbers(f: File) -> set[int]:
+    stem = p.split_ext(f.filename)[0].lower()
+    return {int(n) for n in _NUMBER_RE.findall(stem)}
+
+
+def group_tutorials(files: list[File]) -> list[TutorialGroup]:
+    """Pair one week's solutions with its tutorials: by a number they share in their
+    filenames ("Workshop_04" and "Partial_Solution_04"), else with the week's only
+    tutorial. Solutions with no tutorial get a group of their own."""
+    tutorials = [f for f in files if f.type == T.TUTORIAL.value]
+    groups = [TutorialGroup([t]) for t in tutorials]
+    loose = []
+    for sol in (f for f in files if f.type == T.SOLUTIONS.value):
+        nums = _numbers(sol)
+        match = [g for g in groups if nums & _numbers(g.tutorials[0])]
+        if len(match) == 1:
+            match[0].solutions.append(sol)
+        elif len(groups) == 1:
+            groups[0].solutions.append(sol)
+        else:
+            loose.append(sol)
+    return groups + [TutorialGroup([], [s]) for s in loose]
+
+
+@dataclass
 class Completeness:
     slides: bool
     lectures: int
     lectures_with_transcript: int
     tutorial: bool
     empty: bool
+
+    @property
+    def missing(self) -> int:
+        """Gaps in a week that has something: slides, each lecture's transcript, tutorial."""
+        if self.empty:
+            return 0
+        transcripts = self.lectures - self.lectures_with_transcript if self.lectures else 1
+        return (not self.slides) + transcripts + (not self.tutorial)
 
     @property
     def transcript(self) -> bool:
@@ -116,8 +184,9 @@ class Completeness:
 class WeekRow:
     week: int
     lectures: list[LectureGroup]
-    slots: dict[str, list[File]]  # tutorials, solutions, week_other
+    slots: dict[str, list[File]]  # tutorials (incl. solutions), week_other
     completeness: Completeness
+    tutorials: list[TutorialGroup] = field(default_factory=list)
 
 
 @dataclass
@@ -131,6 +200,52 @@ class Board:
     @property
     def complete_weeks(self) -> int:
         return sum(row.completeness.complete for row in self.rows)
+
+    @property
+    def still_to_add(self) -> dict[str, list[int]]:
+        """Weeks with files but a gap, by what's missing (empty weeks aren't listed)."""
+        gaps: dict[str, list[int]] = {"slides": [], "transcripts": [], "tutorials": []}
+        for row in self.rows:
+            c = row.completeness
+            if c.empty:
+                continue
+            if not c.slides:
+                gaps["slides"].append(row.week)
+            if not c.transcript:
+                gaps["transcripts"].append(row.week)
+            if not c.tutorial:
+                gaps["tutorials"].append(row.week)
+        return {k: v for k, v in gaps.items() if v}
+
+    @property
+    def stats(self) -> dict[str, int]:
+        lectures = [g for row in self.rows for g in row.lectures]
+        return {
+            "weeks": len(self.rows),
+            "weeks_with_lectures": sum(row.completeness.slides for row in self.rows),
+            "transcripts": sum(len(g.transcripts) for g in lectures),
+            "tutorials": sum(len(t.tutorials) for row in self.rows for t in row.tutorials),
+        }
+
+
+def weeks_phrase(weeks: list[int]) -> str:
+    """[6] -> "week 6"; [6, 7] -> "weeks 6 and 7"; [1, 2, 3, 5, 8] -> "weeks 1–3, 5 and 8"."""
+    runs: list[str] = []
+    for w in sorted(set(weeks)):
+        if runs and int(runs[-1].split("–")[-1]) == w - 1:
+            runs[-1] = runs[-1].split("–")[0] + f"–{w}"
+        else:
+            runs.append(str(w))
+    pairs = [r.split("–") for r in runs]  # a run of two reads better as "6 and 7"
+    runs = [
+        x
+        for r in pairs
+        for x in (r if len(r) == 2 and int(r[1]) - int(r[0]) == 1 else ["–".join(r)])
+    ]
+    if len(runs) == 1 and "–" not in runs[0]:
+        return f"week {runs[0]}"
+    body = runs[0] if len(runs) == 1 else ", ".join(runs[:-1]) + f" and {runs[-1]}"
+    return f"weeks {body}"
 
 
 def build_board(subject: Subject, files: list[File], pairs: dict | None = None) -> Board:
@@ -207,11 +322,11 @@ def _week_row(week: int, slots: dict[str, list[File]], pairs: dict | None = None
         slides=any(g.slides for g in lectures),
         lectures=len(lectures),
         lectures_with_transcript=sum(bool(g.transcripts) for g in lectures),
-        tutorial=bool(slots["tutorials"]),
+        tutorial=any(f.type == T.TUTORIAL.value for f in slots["tutorials"]),
         empty=not any(slots.values()),
     )
     others = {k: v for k, v in slots.items() if k != "lectures"}
-    return WeekRow(week, lectures, others, completeness)
+    return WeekRow(week, lectures, others, completeness, group_tutorials(slots["tutorials"]))
 
 
 def _place(f: File, subject: Subject) -> tuple[str, int | None] | None:
@@ -235,7 +350,7 @@ def _place(f: File, subject: Subject) -> tuple[str, int | None] | None:
     if week is None:
         return None
     slot = {T.SLIDES: "lectures", T.TRANSCRIPT: "lectures", T.TUTORIAL: "tutorials",
-            T.SOLUTIONS: "solutions"}.get(ftype, "week_other")  # fmt: skip
+            T.SOLUTIONS: "tutorials"}.get(ftype, "week_other")  # fmt: skip
     return (slot, week)
 
 

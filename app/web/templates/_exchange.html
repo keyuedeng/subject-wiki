@@ -1,0 +1,7 @@
+{#- A question and its reply. Expects `ex` (services.chat.Exchange) and `subject`. -#}
+{% with q = ex.question %}{% include "_msg_user.html" %}{% endwith %}
+{% if ex.reply %}{% with r = ex.reply %}{% include "_reply.html" %}{% endwith %}
+{% elif ex.error %}{% with error = ex.error, question = ex.question.content, mode = ex.question.mode %}{% include "_msg_error.html" %}{% endwith %}
+{% else %}
+<article class="msg msg-error"><p>Still answering this one. Refresh in a moment.</p></article>
+{% endif %}

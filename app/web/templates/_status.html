@@ -1,0 +1,12 @@
+{#- One file's status line, and a button when it can be queued.
+    Expects `f`, `statuses`; `status_view` says which partial the button refreshes. -#}
+{%- set s = statuses[f.id] -%}
+<span class="status status-{{ s.tone or 'plain' }}">
+  {%- if s.tone == "busy" %}<span class="spinner" aria-hidden="true"></span>{% endif -%}
+  {%- if s.reason %}<span class="has-reason" title="{{ s.reason }}" tabindex="0" aria-label="{{ s.text }}: {{ s.reason }}">{{ s.text }}</span>
+  {%- else %}{{ s.text }}{% endif -%}
+  {%- if s.action and can_queue(f) %}
+  <button type="button" class="link-button" hx-post="/files/{{ f.id }}/parse?view={{ status_view }}"
+          {% if status_view == "board" %}hx-target="#view"{% endif %}>{{ s.action }}</button>
+  {%- endif -%}
+</span>

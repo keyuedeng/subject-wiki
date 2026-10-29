@@ -1,48 +1,28 @@
 {% extends "base.html" %}
-{% block title %}{{ subject.name }} · Subject Wiki{% endblock %}
+{% block title %}{{ "Review files · " if view == "table" }}{{ subject.name }} · Subject Wiki{% endblock %}
+{% block nav_active %}board{% endblock %}
 {% block main_attrs %}data-subject-id="{{ subject.id }}" data-view="{{ view }}"{% endblock %}
 {% block content %}
-<nav class="crumbs"><a href="/">Subjects</a> / {{ subject.name }}</nav>
-<div class="subject-head">
-  <h1>{{ subject.name }}</h1>
-  <p class="muted">
-    {% for part in [subject.code, subject.semester, subject.weeks ~ " weeks"] if part %}{{ part }}{{ " · " if not loop.last }}{% endfor %}
-  </p>
-</div>
+<input id="file-input" type="file" multiple hidden accept="{{ upload_accept }}">
 
-<section id="dropzone" class="dropzone {{ 'slim' if summary.total }}" tabindex="0" role="button"
-         aria-label="Upload files: drop them anywhere on this page, or press Enter to choose">
-  <input id="file-input" type="file" multiple hidden accept=".pdf,.pptx,.docx,.vtt,.srt,.txt">
-  <span class="dz-icon" aria-hidden="true">⬆</span>
-  <span class="dz-text"><strong>Drop files anywhere on this page</strong>, or <span class="link">browse</span></span>
-  <span class="dz-hint muted">PDF, PPTX, DOCX, VTT, SRT, TXT · each file is classified automatically</span>
+<section id="view" class="subject-view">
+  {% include "_" ~ view ~ ".html" %}
 </section>
 
-<section id="uploads" class="uploads" hidden>
+<section id="uploads" class="uploads" hidden aria-live="polite">
   <div class="uploads-head">
     <strong id="uploads-title">Uploading</strong>
-    <button type="button" class="ghost small" id="uploads-clear" hidden>Clear</button>
+    <button type="button" class="btn-ghost small" id="uploads-clear" hidden>Clear</button>
   </div>
   <ul id="upload-list"></ul>
-</section>
-
-<nav class="tabs">
-  <a href="?view=board" class="{{ 'active' if view == 'board' }}">Week board</a>
-  <a href="?view=table" class="{{ 'active' if view == 'table' }}">Review table</a>
-</nav>
-
-<section id="view">
-  {% include "_" ~ view ~ ".html" %}
 </section>
 
 <div id="drop-overlay" class="drop-overlay" aria-hidden="true">
   <div class="drop-overlay-msg">
     <strong>Drop to upload to {{ subject.name }}</strong>
-    {% if view == "board" %}<span>or drop onto a week's section to file it there</span>{% endif %}
+    <span>Drop onto a week to file it there</span>
   </div>
 </div>
+<script type="application/json" id="upload-rules">{{ upload_rules | safe }}</script>
 {% endblock %}
-{% block scripts %}
-<script id="upload-rules" type="application/json">{{ upload_rules | safe }}</script>
-<script src="/static/upload.js"></script>
-{% endblock %}
+{% block scripts %}<script src="/static/upload.js"></script>{% endblock %}

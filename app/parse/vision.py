@@ -125,7 +125,7 @@ class OpenAIVision:
         }
 
     def describe(self, png: bytes, text: str, build_captions: list[str]) -> VisionResult:
-        from app.llm.client import ProviderError
+        from app.llm.client import OutputFiltered, ProviderError
 
         image_url = "data:image/png;base64," + base64.b64encode(png).decode()
         try:
@@ -141,6 +141,12 @@ class OpenAIVision:
                 max_output_tokens=MAX_OUTPUT_TOKENS,
                 cache_hint=PROMPT_VERSION,
             )
+        except OutputFiltered as exc:
+            # Deterministic, like a refusal: the page falls back to its text layer instead
+            # of failing the deck on every parse.
+            u = exc.usage
+            usage = Usage(u.input_tokens, u.cached_tokens, u.output_tokens, u.reasoning_tokens)
+            return VisionResult(None, usage, self.model, "stopped by the provider's content filter")
         except ProviderError as exc:
             raise VisionError(str(exc)) from exc
         u = response.usage

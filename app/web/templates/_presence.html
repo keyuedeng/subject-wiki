@@ -1,5 +1,0 @@
-{#- Slides / transcript presence for a lecture. Expects `group`. -#}
-<span class="presence {{ 'on' if group.slides }}"
-      title="{{ 'Slides' if group.slides else 'No slides' }}">slides</span>
-<span class="presence {{ 'on' if group.transcripts }}"
-      title="{{ ('Transcript with timestamps' if group.timestamped else 'Transcript, no timestamps') if group.transcripts else 'No transcript' }}">{{ "⏱ " if group.timestamped }}transcript</span>

@@ -162,7 +162,7 @@ def pptx_notes(data: bytes) -> tuple[dict[int, str], int]:
             continue
         page_no += 1
         if slide.has_notes_slide:
-            text = slide.notes_slide.notes_text_frame.text.strip()
+            text = clean_text(slide.notes_slide.notes_text_frame.text).strip()
             if text:
                 notes[page_no] = text
     return notes, page_no
@@ -197,6 +197,13 @@ class _Raw:
 
 
 BULLET_ONLY_RE = re.compile(r"^[•●▪■◦○‣∙·\-–—*]$")
+# Control characters other than tab and newlines. Some PDFs map glyphs with no Unicode
+# value (often bullets) to U+0000, which Postgres text and JSONB columns can't store.
+CONTROL_RE = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]")
+
+
+def clean_text(text: str) -> str:
+    return CONTROL_RE.sub("", text)
 
 
 def _is_maths(span: dict) -> bool:
@@ -218,11 +225,11 @@ def _raw_page(page: pymupdf.Page) -> _Raw:
     for block in blocks:
         pending_bullet: str | None = None
         for line in block["lines"]:
-            spans = [s for s in line["spans"] if s["text"].strip()]
+            spans = [s for s in line["spans"] if clean_text(s["text"]).strip()]
             if not spans:
                 continue
             # Span texts carry their own spacing; joining with "" keeps "draw()" intact.
-            text = " ".join("".join(s["text"] for s in line["spans"]).split())
+            text = " ".join(clean_text("".join(s["text"] for s in line["spans"])).split())
             if BULLET_ONLY_RE.match(text):
                 pending_bullet = text  # a bullet exported as its own line
                 continue
@@ -276,7 +283,7 @@ def measure(pdf: bytes) -> list[PageInfo]:
                     page_no=i + 1,
                     width=rect.width,
                     height=rect.height,
-                    text_raw=raw.page.get_text(),
+                    text_raw=clean_text(raw.page.get_text()),
                     lines=lines,
                     image_area=image_area,
                     image_count=len(imgs),

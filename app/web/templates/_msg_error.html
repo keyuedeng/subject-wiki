@@ -1,0 +1,9 @@
+{#- A question that couldn't be answered. Expects `error`, `question`, `mode`. -#}
+<article class="msg msg-error" role="alert">
+  <span class="nc-icon">{% include "icons/alert.svg" %}</span>
+  <div class="nc-body">
+    <div class="nc-title">Couldn't answer this</div>
+    <p>Something went wrong ({{ error }}). Your question is saved; try again in a moment.</p>
+    <button type="button" class="btn-small" data-ask="{{ question }}" data-mode="{{ mode or 'auto' }}">Try again</button>
+  </div>
+</article>

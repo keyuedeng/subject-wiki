@@ -1,6 +1,7 @@
 import uuid
 from datetime import datetime
 
+from pgvector.sqlalchemy import Vector
 from sqlalchemy import (
     JSON,
     BigInteger,
@@ -21,6 +22,11 @@ from sqlalchemy.orm import Mapped, mapped_column, relationship
 from app.classify.types import LOW_CONFIDENCE, FileStatus, FileType
 from app.db.base import Base
 
+# Chunk ids are derived from the source they index, so re-indexing updates rows in place.
+CHUNK_ID_NAMESPACE = uuid.UUID("0b8f4f7e-3c2d-4a59-9a1e-7d6c5b4a3f21")
+# Fixed by the vector column (migration 0006); EMBEDDING_DIMENSIONS must match it.
+CHUNK_DIMENSIONS = 1536
+
 # Slide ids are derived, not random, so they survive re-parsing (and delete + re-upload
 # of the same file in the same subject); transcript segments point at them.
 SLIDE_ID_NAMESPACE = uuid.UUID("6f1c2a52-9d6e-4c1b-8f0e-2b7a5d0c9e11")
@@ -28,6 +34,10 @@ SLIDE_ID_NAMESPACE = uuid.UUID("6f1c2a52-9d6e-4c1b-8f0e-2b7a5d0c9e11")
 
 def slide_id(subject_id: uuid.UUID, sha256: str, page_no: int) -> uuid.UUID:
     return uuid.uuid5(SLIDE_ID_NAMESPACE, f"{subject_id}:{sha256}:{page_no}")
+
+
+def chunk_id(subject_id: uuid.UUID, source_key: str) -> uuid.UUID:
+    return uuid.uuid5(CHUNK_ID_NAMESPACE, f"{subject_id}:{source_key}")
 
 
 def _in_list(column: str, values: type[FileType] | type[FileStatus]) -> str:
@@ -236,5 +246,105 @@ class TranscriptSegment(Base):
         UniqueConstraint("file_id", "idx", name="uq_transcript_segments_file_idx"),
         CheckConstraint(
             "clean_status IN ('cleaned', 'rejected', 'failed')", name="clean_status_valid"
+        ),
+    )
+
+
+CHUNK_TYPES = ("slide", "notes", "transcript", "tutorial")
+
+
+class Chunk(Base):
+    """One searchable unit of a subject: a kept slide, a slide's speaker notes, a
+    transcript segment or a tutorial section. Week, type and `included` are read from the
+    file at query time, so edits on the board apply to search without re-indexing.
+
+    Postgres also has a generated `tsv` column (title weighted A, body B) with a GIN
+    index, used by keyword search (app/search/backend.py). It isn't mapped here, so the
+    tests' SQLite schema doesn't need it."""
+
+    __tablename__ = "chunks"
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True)  # chunk_id(subject, key)
+    subject_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("subjects.id", ondelete="CASCADE"), index=True
+    )
+    file_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("files.id", ondelete="CASCADE"), index=True
+    )
+    source_type: Mapped[str] = mapped_column(String(16))
+    source_key: Mapped[str] = mapped_column(Text)  # e.g. "slide:<slide id>"
+    position: Mapped[int]  # page number, or segment index: order within the file
+    title: Mapped[str] = mapped_column(Text)
+    body: Mapped[str] = mapped_column(Text)
+    meta: Mapped[dict] = mapped_column(JsonType)  # page_no, start_ms, slide_id, flags, ...
+    # sha256 of the embedded text and embedding model: unchanged chunks aren't re-embedded.
+    content_hash: Mapped[str] = mapped_column(String(64))
+    embedding: Mapped[list] = mapped_column(
+        JSON().with_variant(Vector(CHUNK_DIMENSIONS), "postgresql")
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    )
+
+    __table_args__ = (
+        CheckConstraint(
+            f"source_type IN ({', '.join(repr(t) for t in CHUNK_TYPES)})", name="source_type_valid"
+        ),
+    )
+
+
+MESSAGE_ROLES = ("user", "assistant")
+MESSAGE_KINDS = ("question", "answer", "where", "error")
+
+
+class Chat(Base):
+    """One Ask conversation in a subject, titled from its first question."""
+
+    __tablename__ = "chats"
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    subject_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("subjects.id", ondelete="CASCADE"), index=True
+    )
+    title: Mapped[str] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    )
+
+    messages: Mapped[list["ChatMessage"]] = relationship(
+        back_populates="chat", cascade="all, delete-orphan", order_by="ChatMessage.idx"
+    )
+
+
+class ChatMessage(Base):
+    """A question, or the answer to it. An answer's `payload` is a snapshot of what was
+    shown (sources with their labels, citations, follow-ups), so an old chat renders the
+    same even after files are re-indexed or deleted."""
+
+    __tablename__ = "chat_messages"
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    chat_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("chats.id", ondelete="CASCADE"))
+    idx: Mapped[int] = mapped_column(SmallInteger)
+    role: Mapped[str] = mapped_column(String(16))
+    kind: Mapped[str] = mapped_column(String(16))
+    content: Mapped[str] = mapped_column(Text)  # the question, or the answer's markdown
+    mode: Mapped[str | None] = mapped_column(String(16))  # the question's mode
+    filters: Mapped[dict] = mapped_column(JsonType, default=dict)  # {weeks, types}
+    payload: Mapped[dict] = mapped_column(JsonType, default=dict)
+    cost_usd: Mapped[float] = mapped_column(Float, default=0.0)
+    cached: Mapped[bool] = mapped_column(default=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+    chat: Mapped[Chat] = relationship(back_populates="messages")
+
+    __table_args__ = (
+        UniqueConstraint("chat_id", "idx", name="uq_chat_messages_chat_idx"),
+        CheckConstraint(
+            f"role IN ({', '.join(repr(r) for r in MESSAGE_ROLES)})", name="role_valid"
+        ),
+        CheckConstraint(
+            f"kind IN ({', '.join(repr(k) for k in MESSAGE_KINDS)})", name="kind_valid"
         ),
     )

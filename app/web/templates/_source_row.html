@@ -1,0 +1,5 @@
+{#- A source in an answer's source list. Expects `ref` (SourceRef), `subject`. -#}
+<li class="src-row">
+  <div class="src-head">{{ ref | chip(subject.id) }}<span class="src-title">{{ ref.title or ref.file_title }}</span></div>
+  <p class="src-excerpt">{{ ref.body | truncate(220) }}</p>
+</li>

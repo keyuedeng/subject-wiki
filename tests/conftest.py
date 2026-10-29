@@ -16,7 +16,7 @@ from sqlalchemy.pool import StaticPool  # noqa: E402
 from app.db import models  # noqa: E402,F401
 from app.db.base import Base  # noqa: E402
 from app.db.models import Subject  # noqa: E402
-from app.db.session import get_db  # noqa: E402
+from app.db.session import get_db, get_session_factory  # noqa: E402
 from app.main import app  # noqa: E402
 from app.storage.client import get_storage  # noqa: E402
 
@@ -96,6 +96,7 @@ def client(session_factory, storage):
             yield session
 
     app.dependency_overrides[get_db] = _db
+    app.dependency_overrides[get_session_factory] = lambda: session_factory
     app.dependency_overrides[get_storage] = lambda: storage
     yield TestClient(app)
     app.dependency_overrides.clear()

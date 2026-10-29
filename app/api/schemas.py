@@ -132,3 +132,77 @@ class PairingIn(BaseModel):
 class PairingOut(BaseModel):
     slides_file_ids: list[uuid.UUID]
     source: str | None
+
+
+ChunkType = Literal["slide", "notes", "transcript", "tutorial"]
+
+
+class SearchIn(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    query: str = Field(min_length=1, max_length=1000)
+    weeks: list[int] = Field(default_factory=list)
+    types: list[ChunkType] = Field(default_factory=list)
+    k: int = Field(default=10, ge=1, le=50)
+    mode: Literal["hybrid", "keyword", "embedding"] = "hybrid"
+
+
+class SourceOut(BaseModel):
+    chunk_id: uuid.UUID
+    source_type: str
+    label: str
+    href: str
+    file_id: uuid.UUID
+    file_title: str
+    week: int | None
+    title: str
+    body: str
+    rank: int | None = None
+    keyword_rank: int | None = None
+    embedding_rank: int | None = None
+    similarity: float | None = None
+
+
+class AskIn(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    question: str = Field(min_length=1, max_length=1000)
+    weeks: list[int] = Field(default_factory=list)
+    types: list[ChunkType] = Field(default_factory=list)
+    mode: Literal["auto", "answer", "where"] = "auto"
+
+
+class AnswerOut(BaseModel):
+    kind: Literal["answer"] = "answer"
+    status: Literal["answered", "partial", "not_covered"]
+    answer_markdown: str  # inline [S1] markers; `handles` maps them to sources
+    handles: dict[str, uuid.UUID]
+    cited_chunk_ids: list[uuid.UUID]
+    missing: str | None
+    warnings: list[str]
+    sources: list[SourceOut]
+    cost_usd: float
+    cached: bool
+
+
+class WhereItemOut(BaseModel):
+    level: Literal["main", "mentioned"]
+    label: str
+    href: str
+    chunk_ids: list[uuid.UUID]
+
+
+class WhereWeekOut(BaseModel):
+    week: int | None
+    items: list[WhereItemOut]
+
+
+class WhereOut(BaseModel):
+    kind: Literal["where"] = "where"
+    topic: str
+    found: bool
+    weeks: list[WhereWeekOut]
+    missing_note: str | None
+    sources: list[SourceOut]
+    cost_usd: float
+    cached: bool

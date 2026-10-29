@@ -1,0 +1,56 @@
+{#- A coverage list: where a topic is taught, by week. Expects `r` (WhereAnswer), `subject`. -#}
+{% macro where_row(item) %}
+<a class="where-row {{ 'mentioned' if item.level == 'mentioned' }}" href="{{ item.href }}"
+   data-preview="/subjects/{{ subject.id }}/ask/source/{{ item.first.chunk_id }}">
+  <span class="where-span span-{{ item.first.source_type }}">{{ ICONS.get(item.first.source_type, "") }}{{ item.short_label }}</span>
+  <span class="where-desc">{{ item.description }}</span>
+  {% if "worked_example" in item.flags %}<span class="flag-badge flag-worked_example">Worked example</span>{% endif %}
+  {% if "exam_hint" in item.flags %}<span class="flag-badge flag-exam_hint">Exam hint</span>{% endif %}
+</a>
+{% endmacro %}
+<article class="msg msg-where" aria-label="Coverage">
+  <div class="msg-meta" title="{{ 'Cached: $0' if r.cached else ('This answer: $%.4f' | format(r.cost_usd)) }}">
+    <span class="sw-badge" aria-hidden="true">SW</span>Coverage across your uploaded material
+  </div>
+  {% if r.found %}
+  <p class="where-summary">
+    {%- if r.summary %}{{ r.summary }}
+    {%- else %}<strong>{{ r.topic }}</strong> is covered in {{ weeks_phrase(r.weeks | map(attribute="week") | select("number") | list) | capitalize }}.{% endif -%}
+  </p>
+  {% for wk in r.weeks %}
+  <section class="where-card" aria-label="{{ 'Week ' ~ wk.week if wk.week is not none else 'No week' }}">
+    <div class="where-card-head">
+      <h2>{{ "Week " ~ wk.week if wk.week is not none else "No week set" }}</h2>
+      {% if wk.deck_titles %}<span>{{ wk.deck_titles | join(" · ") }}</span>{% endif %}
+    </div>
+    {% if wk.main_items %}
+    <div class="where-group">
+      <span class="level level-main">Main coverage</span>
+      {% for item in wk.main_items %}{{ where_row(item) }}{% endfor %}
+    </div>
+    {% endif %}
+    {% if wk.mentioned_items %}
+    <div class="where-group">
+      <span class="level level-mentioned">Mentioned</span>
+      {% for item in wk.mentioned_items %}{{ where_row(item) }}{% endfor %}
+    </div>
+    {% endif %}
+  </section>
+  {% endfor %}
+  {% else %}
+  <div class="where-none">
+    <div class="nc-title">{{ r.topic }} isn't in the uploaded material</div>
+    <p>{{ "None of the " ~ r.candidates ~ " closest slides, notes and transcript moments cover it." if r.candidates else "Nothing in the slides, notes or transcripts mentions it." }}</p>
+  </div>
+  {% endif %}
+  {% if r.missing_note %}
+  <div class="where-missing">
+    {% include "icons/alert.svg" %}
+    <p>{{ r.missing_note }} <a href="/subjects/{{ subject.id }}">Open the board</a></p>
+  </div>
+  {% endif %}
+  <div class="followups">
+    {% if r.found %}<button type="button" class="followup" data-ask="Explain {{ r.topic }}" data-mode="auto">Explain {{ r.topic }}</button>{% endif %}
+    {% for f in r.follow_ups if not f.lower().startswith("explain ") or not r.found %}{% if loop.index <= (1 if r.found else 2) %}<button type="button" class="followup" data-ask="{{ f }}">{{ f }}</button>{% endif %}{% endfor %}
+  </div>
+</article>

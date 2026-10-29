@@ -1,5 +1,6 @@
 """Background processing: one file at a time in a worker thread (pages/windows run
-concurrently inside a file). Slides are parsed; transcripts are cleaned and aligned.
+concurrently inside a file). Slides are parsed; transcripts are cleaned and aligned; each
+finished file is then indexed for search (only chunks whose text changed are embedded).
 
 State lives in Postgres (files.status), so nothing is lost if the app restarts: files
 left in "parsing" are queued again on startup, and the request-hash cache makes that free
@@ -23,6 +24,7 @@ from app.llm.cache import LlmCache
 from app.llm.client import LlmClient, OpenAIProvider
 from app.parse.pipeline import Parser, can_parse
 from app.parse.vision import OpenAIVision
+from app.search.index import Indexer
 from app.storage.client import get_storage
 from app.transcripts.pairing import transcripts_for
 from app.transcripts.pipeline import TRANSCRIPT_EXTS, TranscriptProcessor, TranscriptSettings
@@ -44,13 +46,16 @@ class ParseQueue:
         parser: Parser,
         transcripts: TranscriptProcessor | None = None,
         executor: Executor | None = None,
+        indexer: Indexer | None = None,
     ):
         self.parser = parser
         self.transcripts = transcripts
+        self.indexer = indexer
         self.executor = executor or ThreadPoolExecutor(max_workers=1, thread_name_prefix="parse")
-        parser.on_parsed = self._requeue_paired_transcripts
+        parser.on_parsed = self._after_parse
         if transcripts is not None:
             transcripts.parse_slides = parser.parse
+            transcripts.on_processed = self._index
 
     def _job(self, file_type: str):
         if file_type == FileType.TRANSCRIPT.value and self.transcripts is not None:
@@ -84,6 +89,26 @@ class ParseQueue:
         if rows:
             logger.info("resumed %d interrupted job(s)", len(rows))
         return len(rows)
+
+    def _after_parse(self, slides_id: uuid.UUID) -> None:
+        self._index(slides_id)
+        self._requeue_paired_transcripts(slides_id)
+
+    def _index(self, file_id: uuid.UUID) -> None:
+        """Index a finished file and note the result after its status summary. A failure
+        is reported there but doesn't fail the file: indexing again is cheap."""
+        if self.indexer is None:
+            return
+        try:
+            note = self.indexer.index_file(file_id).summary
+        except Exception as exc:
+            logger.exception("indexing failed for file %s", file_id)
+            note = f"search index failed ({type(exc).__name__}: {exc}"[:300] + ")"
+        with self.parser.session_factory() as db:
+            file = db.get(File, file_id)
+            if file is not None:
+                file.status_detail = " · ".join(p for p in (file.status_detail, note) if p)
+                db.commit()
 
     def _requeue_paired_transcripts(self, slides_id: uuid.UUID) -> None:
         if self.transcripts is None:
@@ -127,10 +152,11 @@ def get_queue() -> ParseQueue:
         vision_factory=_vision_factory,
         concurrency=settings.parse_concurrency,
     )
+    llm = LlmClient(_provider_factory, LlmCache(session_factory))
     transcripts = TranscriptProcessor(
         session_factory=session_factory,
         storage=storage,
-        llm=LlmClient(_provider_factory, LlmCache(session_factory)),
+        llm=llm,
         settings=TranscriptSettings(
             clean_model=settings.transcript_clean_model,
             clean_effort=settings.transcript_clean_effort,
@@ -139,4 +165,5 @@ def get_queue() -> ParseQueue:
             concurrency=settings.parse_concurrency,
         ),
     )
-    return ParseQueue(parser, transcripts)
+    indexer = Indexer(session_factory, llm, settings.embedding_model, settings.embedding_dimensions)
+    return ParseQueue(parser, transcripts, indexer=indexer)

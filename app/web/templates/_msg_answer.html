@@ -1,0 +1,69 @@
+{#- A cited answer, or the "not covered" card. Expects `r` (services.ask.Answer), `subject`. -#}
+{%- set others = r.sources | rejectattr("ref", "in", r.cited) | list -%}
+{% if r.status == "not_covered" %}
+<article class="msg msg-notcovered" aria-label="Not covered">
+  <span class="nc-icon">{% include "icons/alert.svg" %}</span>
+  <div class="nc-body">
+    <div class="nc-title">Not explained in your uploaded material</div>
+    <div class="answer-body md">{{ r.answer_markdown | cite(r.handles, subject.id) }}</div>
+    <div class="nc-links">
+      <a href="/subjects/{{ subject.id }}">See what's missing on the board</a>
+      {% if r.sources %}
+      <button type="button" class="link-button" aria-expanded="false" data-toggle-sources>
+        {{ r.sources | length }} source{{ "" if r.sources | length == 1 else "s" }} checked</button>
+      {% endif %}
+    </div>
+    {% if r.sources %}
+    <div class="msg-sources" hidden>
+      <ol>{% for src in r.sources %}{% with ref = src.ref %}{% include "_source_row.html" %}{% endwith %}{% endfor %}</ol>
+    </div>
+    {% endif %}
+  </div>
+</article>
+{% if r.follow_ups %}
+<div class="followups after-card">
+  {% for f in r.follow_ups %}<button type="button" class="followup" data-ask="{{ f }}">{{ f }}</button>{% endfor %}
+</div>
+{% endif %}
+{% else %}
+<article class="msg msg-answer" aria-label="Answer">
+  <div class="msg-meta" title="{{ 'Cached: $0' if r.cached else ('This answer: $%.4f' | format(r.cost_usd)) }}">
+    <span class="sw-badge" aria-hidden="true">SW</span>{{ answer_meta(r) }}
+  </div>
+  <div class="answer-body md">{{ r.answer_markdown | cite(r.handles, subject.id) }}</div>
+  {% if r.status == "partial" and r.missing %}
+  <p class="answer-gap">Not in your material: {{ r.missing }}</p>
+  {% endif %}
+  {% for w in r.warnings %}<p class="answer-warning">{{ w }}</p>{% endfor %}
+  <div class="msg-actions">
+    <button type="button" class="act" data-copy="{{ copy_text(r.answer_markdown, r.handles) }}">
+      <svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><rect x="4" y="4" width="8" height="8" rx="1.5"/><path d="M10 4V2.5A.5.5 0 0 0 9.5 2h-7a.5.5 0 0 0-.5.5v7a.5.5 0 0 0 .5.5H4"/></svg>
+      <span>Copy</span></button>
+    <button type="button" class="act" data-mode="where"
+            data-ask="{{ ('Where is ' ~ r.topic ~ ' taught?') if r.topic else r.question }}">
+      <svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><path d="M7 12.5s4-3.6 4-7a4 4 0 0 0-8 0c0 3.4 4 7 4 7z"/><circle cx="7" cy="5.5" r="1.4"/></svg>
+      Where is this taught?</button>
+    {% if r.sources %}
+    <button type="button" class="act" aria-expanded="false" data-toggle-sources>
+      {{ r.cited | length }} source{{ "" if r.cited | length == 1 else "s" }}
+      {% include "icons/chevron.svg" %}</button>
+    {% endif %}
+  </div>
+  {% if r.sources %}
+  <div class="msg-sources" hidden>
+    {% if r.cited %}<ol>{% for ref in r.cited %}{% include "_source_row.html" %}{% endfor %}</ol>{% endif %}
+    {% if others %}
+    <details class="also">
+      <summary>{{ others | length }} more retrieved, not cited</summary>
+      <ol>{% for src in others %}{% with ref = src.ref %}{% include "_source_row.html" %}{% endwith %}{% endfor %}</ol>
+    </details>
+    {% endif %}
+  </div>
+  {% endif %}
+  {% if r.follow_ups %}
+  <div class="followups">
+    {% for f in r.follow_ups %}<button type="button" class="followup" data-ask="{{ f }}">{{ f }}</button>{% endfor %}
+  </div>
+  {% endif %}
+</article>
+{% endif %}

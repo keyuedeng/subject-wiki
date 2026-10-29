@@ -1,50 +1,58 @@
+{#- One row of the review table. Edits save on change and send back this row. -#}
+{%- set title = names.get(f.id) or (f | file_title(subject)) -%}
+{%- set href = ("/files/" ~ f.id ~ "/transcript") if is_transcript(f) and f.status == "parsed"
+               else (("/files/" ~ f.id ~ "/slides") if can_parse(f) and f.status == "parsed" else none) -%}
 <tr id="file-{{ f.id }}" class="{{ 'review' if f.needs_review }} {{ 'excluded' if not f.included }}"
     hx-target="this" hx-swap="outerHTML"
     {% if f.status == "parsing" %}hx-get="/files/{{ f.id }}/row" hx-trigger="every 2s"{% endif %}>
-  <td class="name" title="{{ f.filename }}">
-    <div class="name-title">{{ f | file_title(subject) }}</div>
-    <div class="name-file">{{ f.filename }}</div>
+  <td class="file-cell">
+    <div class="file-title">{{ title }}</div>
+    <div class="file-sub">{{ f.filename }} · {{ f.size_bytes | filesize }}</div>
   </td>
   <td>
-    <select name="type" aria-label="Type" hx-patch="/files/{{ f.id }}" hx-trigger="change"
+    <label class="sr-only" for="type-{{ f.id }}">Type</label>
+    <select id="type-{{ f.id }}" name="type" hx-patch="/files/{{ f.id }}" hx-trigger="change"
             hx-vals='{"view": "row"}'>
       {% for t in FILE_TYPES %}
-      <option value="{{ t }}" {{ "selected" if f.type == t }}>{{ t | replace("_", " ") }}</option>
+      <option value="{{ t }}" {{ "selected" if f.type == t }}>{{ TYPE_LABELS[t] }}</option>
       {% endfor %}
     </select>
   </td>
   <td>
-    <input name="week" type="number" min="0" max="52" value="{{ f.week if f.week is not none }}"
-           aria-label="Week" hx-patch="/files/{{ f.id }}" hx-trigger="change" hx-vals='{"view": "row"}'>
+    <label class="sr-only" for="week-{{ f.id }}">Week</label>
+    <input id="week-{{ f.id }}" name="week" type="number" min="0" max="52"
+           value="{{ f.week if f.week is not none }}"
+           hx-patch="/files/{{ f.id }}" hx-trigger="change" hx-vals='{"view": "row"}'>
   </td>
   <td>
-    <input name="lecture" type="number" min="0" max="99" value="{{ f.lecture if f.lecture is not none }}"
-           aria-label="Lecture" hx-patch="/files/{{ f.id }}" hx-trigger="change" hx-vals='{"view": "row"}'>
+    {% if f.type in ("slides", "transcript") %}
+    <label class="sr-only" for="lecture-{{ f.id }}">Lecture</label>
+    <input id="lecture-{{ f.id }}" name="lecture" type="number" min="0" max="99"
+           value="{{ f.lecture if f.lecture is not none }}"
+           hx-patch="/files/{{ f.id }}" hx-trigger="change" hx-vals='{"view": "row"}'>
+    {% else %}<span class="dash">—</span>{% endif %}
   </td>
-  <td class="num">{{ f.size_bytes | filesize }}</td>
-  <td class="nowrap">{{ f.created_at | date }}</td>
-  <td>{% if f.type == "transcript" %}{{ "Yes" if f.has_timestamps else "No" }}{% else %}<span class="muted">–</span>{% endif %}</td>
-  <td>
-    <button type="button" class="toggle {{ 'on' if f.included }}" role="switch"
-            aria-checked="{{ 'true' if f.included else 'false' }}"
-            aria-label="Include {{ f.filename }}"
-            hx-patch="/files/{{ f.id }}"
-            hx-vals='{"included": "{{ "false" if f.included else "true" }}", "view": "row"}'>
-      {{ "Included" if f.included else "Excluded" }}
-    </button>
-  </td>
-  <td class="guess" title="{{ f.classify_reason }}">
-    <span class="conf {{ 'low' if f.needs_review }}">{{ "%.0f" | format(f.classify_confidence * 100) }}%</span>
-    <span class="reason">{{ "reviewed" if f.reviewed else f.classify_reason }}</span>
-  </td>
-  <td class="nowrap">{% with parse_view = "row" %}{% include "_parse_status.html" %}{% endwith %}</td>
-  <td class="nowrap actions">
+  <td class="status-cell">
     {% if f.needs_review %}
-    <button type="button" class="ghost small" title="The guess is right"
-            hx-patch="/files/{{ f.id }}" hx-vals='{"reviewed": "true", "view": "row"}'>✓</button>
+    <div class="check-row">
+      <span class="check-tag">Needs a check</span>
+      <button type="button" class="btn-small" hx-patch="/files/{{ f.id }}"
+              hx-vals='{"reviewed": "true", "view": "row"}'>Looks right</button>
+    </div>
+    <div class="check-reason">{{ f.classify_reason }}</div>
+    {% else %}
+    {% with status_view = "row" %}{% include "_status.html" %}{% endwith %}
     {% endif %}
+  </td>
+  <td class="actions">
+    {% if f.type == "reading" %}
+    <button type="button" class="btn-small" hx-patch="/files/{{ f.id }}"
+            hx-vals='{"included": "{{ "false" if f.included else "true" }}", "view": "row"}'>
+      {{ "Leave out" if f.included else "Include" }}</button>
+    {% endif %}
+    {% if href %}<a class="view-link" href="{{ href }}">View</a>{% endif %}
     <button type="button" class="del" aria-label="Delete {{ f.filename }}"
-            hx-delete="/files/{{ f.id }}?view=table" hx-target="#view" hx-swap="innerHTML"
+            hx-delete="/files/{{ f.id }}?view=table&filter={{ filter }}" hx-target="#view" hx-swap="innerHTML"
             hx-confirm="Delete “{{ f.filename }}”? This removes the stored file.">✕</button>
   </td>
 </tr>

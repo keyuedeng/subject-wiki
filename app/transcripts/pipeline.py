@@ -82,6 +82,8 @@ class TranscriptProcessor:
     settings: TranscriptSettings
     # Parses a slides file synchronously (decks are parsed first if needed).
     parse_slides: Callable[[uuid.UUID], None] | None = None
+    # Called after a successful run (e.g. to index the segments for search).
+    on_processed: Callable[[uuid.UUID], None] | None = None
 
     def process(self, file_id: uuid.UUID) -> None:
         """Run and record the outcome on the file; never raises."""
@@ -95,6 +97,8 @@ class TranscriptProcessor:
             self._set_status(file_id, FileStatus.FAILED, message[:500])
         else:
             self._set_status(file_id, FileStatus.PARSED, summary)
+            if self.on_processed is not None:
+                self.on_processed(file_id)
 
     def _process(self, file_id: uuid.UUID) -> str:
         with self.session_factory() as db:

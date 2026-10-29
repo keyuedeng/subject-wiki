@@ -1,4 +1,5 @@
 {% extends "base.html" %}
+{% block nav_active %}board{% endblock %}
 {% block title %}{{ file | file_title(subject) }} · Slides · Subject Wiki{% endblock %}
 {% block content %}
 <nav class="crumbs">
@@ -125,7 +126,7 @@
     {% for c in content.code_blocks %}<pre class="code"><code>{{ c.code }}</code></pre>{% endfor %}
     {% endif %}
 
-    {% if slide.notes %}<h3>Speaker notes</h3><p class="notes">{{ slide.notes }}</p>{% endif %}
+    {% if slide.notes %}<div id="notes" class="notes-block"><h3>Speaker notes</h3><p class="notes">{{ slide.notes }}</p></div>{% endif %}
 
     <details class="raw">
       <summary>Raw JSON, text layer and routing signals</summary>

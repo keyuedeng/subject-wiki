@@ -45,7 +45,7 @@ def test_full_flow(client, storage):
     board = client.post(f"/files/{fid}/move", data={"slot": "lectures", "week": "7"})
     assert board.status_code == 200
     # The re-rendered board (lectures regroup), with the chip now in week 7's lectures.
-    assert 'class="weeks"' in board.text and f'data-file-id="{fid}"' in board.text
+    assert 'class="week-grid"' in board.text and f'data-file-id="{fid}"' in board.text
     bad = client.post(f"/files/{fid}/move", data={"slot": "lectures"})
     assert bad.status_code == 422  # weekly slot without a week
     moved = client.get(f"/api/subjects/{sid}/files").json()[0]
@@ -97,11 +97,67 @@ def test_board_pairs_slides_and_transcript(client):
     upload(client, sid, "COMP30027_Week2_Lecture3_NaiveBayes.pdf", b"slides")
     upload(client, sid, "lecture-03-week-2.vtt", b"WEBVTT\n")
     board = client.get(f"/subjects/{sid}/view/board").text
-    assert '<details class="lecture">' in board
-    assert "Naive Bayes" in board and "2 files" in board
+    week2 = board.split(">Week 2<", 1)[1].split(">Week 3<", 1)[0]
+    # Deck and transcript side by side in week 2's lecture row: no transcript gap left.
+    assert "Naive Bayes" in week2 and "lecture-03-week-2.vtt" in week2
+    assert "Drop transcript" not in week2 and "Drop slides" not in week2
 
 
 def test_invalid_subject_reopens_dialog(client):
     r = client.post("/subjects", data={"name": " ", "code": "X1", "weeks": "12"})
     assert r.status_code == 422
     assert "data-open-on-load" in r.text and 'value="X1"' in r.text
+
+
+def test_board_columns_gaps_and_whole_subject(client):
+    sid = create_subject(client)
+    upload(client, sid, "COMP30027_Week2_Lecture3_NaiveBayes.pdf", b"slides")
+    upload(client, sid, "Workshop_02.pdf", b"tute", slot="tutorials", week="2")
+    upload(client, sid, "Partial_Solution_02.pdf", b"sol", slot="tutorials", week="2")
+    board = client.get(f"/subjects/{sid}/view/board").text
+    for col in ("Lecture", "Lecture transcript", "Tutorial", "Other"):
+        assert f"<div>{col}</div>" in board
+    week2 = board.split(">Week 2<", 1)[1].split(">Week 3<", 1)[0]
+    assert "1 missing" in week2 and "Drop transcript" in week2 and "Drop tutorial" not in week2
+    # Questions and solutions in one tutorial card.
+    assert "Questions</span> · Workshop_02.pdf" in week2
+    assert "Solutions</span> · Partial_Solution_02.pdf" in week2
+    # Empty weeks collapse to one line; nothing says solutions are missing.
+    assert board.count("Nothing uploaded") == 11 and "olutions missing" not in board
+    assert "Still to add:" in board and "transcripts for week 2" in board
+    assert "Not uploaded. It sets the topic list for the wiki." in board
+    assert "1 of 12 weeks have lectures · 0 transcripts · 1 tutorial" in board
+
+
+def test_review_table_filters_and_checks(client):
+    sid = create_subject(client)
+    upload(client, sid, "COMP30027_Week3_Lecture5.pdf", b"slides")
+    low = upload(client, sid, "IMG_2041.pdf", b"mystery")["file"]
+    assert low["needs_review"]
+    table = client.get(f"/subjects/{sid}?view=table").text
+    assert "All · 2" in table and "Needs a check · 1" in table and "Slides · 1" in table
+    assert '<option value="slides" selected>Lecture slides</option>' in table
+    assert "Uploaded · not parsed yet" in table and "Looks right" in table
+    only = client.get(f"/subjects/{sid}/view/table?filter=review").text
+    assert "IMG_2041.pdf" in only and "COMP30027_Week3_Lecture5.pdf" not in only
+    row = client.patch(f"/files/{low['id']}", data={"reviewed": "true", "view": "row"}).text
+    assert "Looks right" not in row and "Needs a check" not in row
+
+
+def test_failed_files_show_their_error_on_hover(client, session_factory):
+    import uuid
+
+    from app.db.models import File
+
+    sid = create_subject(client)
+    fid = upload(client, sid, "COMP30027_Week3_Lecture5.pdf")["file"]["id"]
+    with session_factory() as db:
+        f = db.get(File, uuid.UUID(fid))
+        f.status = "failed"
+        f.status_detail = ("DataError: PostgreSQL text fields cannot contain NUL (0x00) bytes\n"
+                           "[SQL: INSERT INTO slides ...]")  # fmt: skip
+        db.commit()
+    reason = 'title="DataError: PostgreSQL text fields cannot contain NUL (0x00) bytes"'
+    board = client.get(f"/subjects/{sid}/view/board").text
+    assert "Parse failed" in board and reason in board and "INSERT INTO" not in board
+    assert reason in client.get(f"/subjects/{sid}/view/table").text

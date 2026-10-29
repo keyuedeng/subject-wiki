@@ -1,0 +1,76 @@
+{#- The source preview beside a chat: a slide with what was said while it was shown, or a
+    lecture moment that wasn't matched to a slide. -#}
+<div class="panel-head">
+  <div class="panel-label">Source</div>
+  <button type="button" class="panel-close" data-close-panel aria-label="Close source preview">
+    <svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" aria-hidden="true"><path d="M3 3l8 8M11 3l-8 8"/></svg>
+  </button>
+</div>
+
+{% if gone %}
+<p class="panel-empty">This source is no longer in the index. Its file may have been re-parsed or deleted.</p>
+
+{% elif slide %}
+<div class="panel-title-block">
+  <div class="panel-where">{{ where }}</div>
+  <div class="panel-title">{{ slide.title or deck_title }}</div>
+</div>
+<a class="panel-image" href="/files/{{ file.id }}/slides?page={{ slide.page_no }}">
+  <img src="/files/{{ file.id }}/pages/{{ slide.page_no }}.png" alt="Slide {{ slide.page_no }}{{ ': ' ~ slide.title if slide.title }}">
+</a>
+<div class="panel-nav">
+  <button type="button" class="panel-step" aria-label="Previous slide" {% if prev %}hx-get="/subjects/{{ subject.id }}/ask/slide/{{ prev.id }}" hx-target="#source-panel"{% else %}disabled{% endif %}>
+    <svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" aria-hidden="true"><path d="M8.5 3L4.5 7l4 4"/></svg>
+  </button>
+  <button type="button" class="panel-step" aria-label="Next slide" {% if next %}hx-get="/subjects/{{ subject.id }}/ask/slide/{{ next.id }}" hx-target="#source-panel"{% else %}disabled{% endif %}>
+    <svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" aria-hidden="true"><path d="M5.5 3l4 4-4 4"/></svg>
+  </button>
+  <a class="panel-link" href="/files/{{ file.id }}/slides?page={{ slide.page_no }}">Open in slide viewer</a>
+</div>
+
+{% if slide.notes %}
+<div class="panel-section">
+  <div class="panel-label">Lecturer notes</div>
+  <p class="panel-notes {{ 'hl' if notes_highlight }}">{{ slide.notes }}</p>
+</div>
+{% endif %}
+
+<div class="panel-section">
+  <div class="panel-label">What was said</div>
+  {% for seg, tfile in said %}
+  <a class="said-row {{ 'hl' if highlight and highlight[0] == tfile.id and highlight[1] == seg.idx }}"
+     href="/files/{{ tfile.id }}/transcript#seg-{{ seg.idx }}">
+    <span class="said-top">
+      <span class="said-time">{{ seg.start_ms | clock }}</span>
+      {% for fl in seg.flags if fl.type in ("worked_example", "exam_hint") %}<span class="flag-badge flag-{{ fl.type }}">{{ FLAG_LABELS[fl.type] }}</span>{% endfor %}
+    </span>
+    <span class="said-text">{{ seg.clean_text | truncate(240) }}</span>
+  </a>
+  {% else %}
+  <p class="panel-empty">No lecture moments were matched to this slide.</p>
+  {% endfor %}
+  {% if said %}
+  {% set first = said[0] %}
+  <a class="panel-link" href="/files/{{ first[1].id }}/transcript#seg-{{ first[0].idx }}">Open full transcript</a>
+  {% endif %}
+</div>
+
+{% else %}
+<div class="panel-title-block">
+  <div class="panel-where">{{ where }} · not matched to a slide</div>
+  <div class="panel-title">{{ deck_title }}</div>
+</div>
+<div class="panel-section">
+  <div class="panel-label">What was said</div>
+  {% for seg in segments %}
+  <a class="said-row {{ 'hl' if seg.idx == idx }}" href="/files/{{ transcript.id }}/transcript#seg-{{ seg.idx }}">
+    <span class="said-top">
+      <span class="said-time">{{ seg.start_ms | clock }}</span>
+      {% for fl in seg.flags if fl.type in ("worked_example", "exam_hint") %}<span class="flag-badge flag-{{ fl.type }}">{{ FLAG_LABELS[fl.type] }}</span>{% endfor %}
+    </span>
+    <span class="said-text">{{ seg.clean_text | truncate(400 if seg.idx == idx else 160) }}</span>
+  </a>
+  {% endfor %}
+  <a class="panel-link" href="/files/{{ transcript.id }}/transcript#seg-{{ idx }}">Open full transcript</a>
+</div>
+{% endif %}

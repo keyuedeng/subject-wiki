@@ -24,6 +24,7 @@ from app.db.models import File, Slide, Subject, TranscriptSegment
 from app.jobs.worker import can_process_transcript, can_queue
 from app.parse.pipeline import can_parse
 from app.parse.vision import PROMPT_VERSION
+from app.qa.labels import clock
 from app.services.board import (
     SLOTS,
     SUBJECT_SLOT_KEYS,
@@ -31,6 +32,7 @@ from app.services.board import (
     SlotError,
     build_board,
     resolve_slot,
+    weeks_phrase,
 )
 from app.services.files import FileEdit, apply_edit, apply_type, delete_file
 from app.storage.client import StorageError
@@ -41,6 +43,7 @@ from app.transcripts.pairing import (
     set_manual,
     sync_auto_pairs,
 )
+from app.web import status as st
 
 router = APIRouter(include_in_schema=False)
 templates = Jinja2Templates(directory=Path(__file__).parent / "templates")
@@ -77,16 +80,7 @@ def _render_markdown(text: str | None) -> str:
     return _markdown.render(_VISIBILITY_AFTER_BULLET.sub(r"\1\\\2", text or ""))
 
 
-def _clock(ms: int | None) -> str:
-    if ms is None:
-        return "–"
-    s = ms // 1000
-    return (
-        f"{s // 3600}:{s % 3600 // 60:02d}:{s % 60:02d}" if s >= 3600 else f"{s // 60}:{s % 60:02d}"
-    )
-
-
-templates.env.filters["clock"] = _clock
+templates.env.filters["clock"] = clock
 templates.env.filters["file_title"] = _file_title
 templates.env.filters["markdown"] = _render_markdown
 templates.env.globals.update(
@@ -100,6 +94,9 @@ templates.env.globals.update(
     },
     is_transcript=can_process_transcript,
     FILE_TYPES=[t.value for t in FileType],
+    TYPE_LABELS=st.TYPE_LABELS,
+    ACCEPTED_LABEL=", ".join(e.upper() for e in sorted(patterns.ACCEPTED_EXTENSIONS)),
+    weeks_phrase=weeks_phrase,
     SLOTS=SLOTS,
     WEEK_SLOT_KEYS=WEEK_SLOT_KEYS,
     SUBJECT_SLOT_KEYS=SUBJECT_SLOT_KEYS,
@@ -112,6 +109,18 @@ async def form_data(request: Request) -> dict[str, str]:
 
 
 FormData = Annotated[dict[str, str], Depends(form_data)]
+
+
+async def form_lists(request: Request) -> dict[str, list[str]]:
+    """Every value of every field (checkbox groups send a name more than once)."""
+    out: dict[str, list[str]] = {}
+    for k, v in (await request.form()).multi_items():
+        if isinstance(v, str):
+            out.setdefault(k, []).append(v)
+    return out
+
+
+FormLists = Annotated[dict[str, list[str]], Depends(form_lists)]
 
 
 # Pages
@@ -137,7 +146,7 @@ def create_subject(request: Request, db: DbSession, form: FormData) -> Response:
 
 @router.get("/subjects/{subject_id}", response_class=HTMLResponse)
 def subject_page(
-    request: Request, subject_id: uuid.UUID, db: DbSession, view: str = "board"
+    request: Request, subject_id: uuid.UUID, db: DbSession, view: str = "board", filter: str = "all"
 ) -> HTMLResponse:
     subject = subject_or_404(db, subject_id)
     view = view if view in Views else "board"
@@ -154,15 +163,18 @@ def subject_page(
             "subject": subject,
             "view": view,
             "upload_rules": json.dumps(upload_rules),
-            **_view_context(db, subject, view),
+            "upload_accept": ",".join(f".{e}" for e in sorted(patterns.ACCEPTED_EXTENSIONS)),
+            **_view_context(db, subject, view, filter),
         },
     )
 
 
 @router.get("/subjects/{subject_id}/view/{view}", response_class=HTMLResponse)
-def subject_view(request: Request, subject_id: uuid.UUID, view: str, db: DbSession) -> HTMLResponse:
+def subject_view(
+    request: Request, subject_id: uuid.UUID, view: str, db: DbSession, filter: str = "all"
+) -> HTMLResponse:
     subject = subject_or_404(db, subject_id)
-    return _render_view(request, db, subject, view)
+    return _render_view(request, db, subject, view, filter)
 
 
 # File actions (HTMX). `view` says which partial to send back.
@@ -194,7 +206,12 @@ def move_file(request: Request, file_id: uuid.UUID, db: DbSession, form: FormDat
 
 @router.delete("/files/{file_id}", response_class=HTMLResponse)
 def remove_file(
-    request: Request, file_id: uuid.UUID, db: DbSession, storage: StorageDep, view: str = "table"
+    request: Request,
+    file_id: uuid.UUID,
+    db: DbSession,
+    storage: StorageDep,
+    view: str = "table",
+    filter: str = "all",
 ) -> Response:
     file = file_or_404(db, file_id)
     subject = file.subject
@@ -202,7 +219,7 @@ def remove_file(
         delete_file(db, storage, file)
     except StorageError as exc:
         raise HTTPException(502, str(exc)) from exc
-    return _render_view(request, db, subject, view)
+    return _render_view(request, db, subject, view, filter)
 
 
 # Slide parsing
@@ -427,11 +444,39 @@ def _pair_names(db: DbSession, subject: Subject) -> dict:
 
 
 def _row(request: Request, db: DbSession, file: File) -> HTMLResponse:
+    subject = file.subject
+    files = _files(db, subject)
+    board = build_board(subject, files, pairs_by_subject(db, subject.id))
     return templates.TemplateResponse(
         request,
         "_file_row.html",
-        {"f": file, "subject": file.subject, "pair_names": _pair_names(db, file.subject)},
-    )
+        {"f": file, "subject": subject, "statuses": _statuses(db, subject, files, board),
+         "names": _names(db, subject, files), "filter": "all"},
+    )  # fmt: skip
+
+
+def _names(db: DbSession, subject: Subject, files: list[File]) -> dict:
+    """Board and table titles that differ from file_title: a transcript without a title of
+    its own is named after the deck it's paired with."""
+    pairs = _pair_names(db, subject)
+    return {
+        f.id: f"Lecture transcript: {pairs[f.id][0]}"
+        for f in files
+        if f.type == FileType.TRANSCRIPT and not f.title and pairs.get(f.id)
+    }
+
+
+def _statuses(db: DbSession, subject: Subject, files: list[File], board) -> dict:
+    """File id -> its status line on the board and in the table."""
+    names = _pair_names(db, subject)
+    titles = {f.id: _file_title(f, subject) for f in files}
+    tutorials = st.tutorial_pairs(board, titles)
+    lengths = st.durations(db, [f.id for f in files if f.type == FileType.TRANSCRIPT])
+    return {
+        f.id: st.file_status(f, duration_ms=lengths.get(f.id), paired_decks=names.get(f.id),
+                             tutorial=tutorials.get(f.id))
+        for f in files
+    }  # fmt: skip
 
 
 def _index(
@@ -472,7 +517,7 @@ def _files(db: DbSession, subject: Subject) -> list[File]:
     return list(db.scalars(select(File).where(File.subject_id == subject.id)))
 
 
-def _view_context(db: DbSession, subject: Subject, view: str) -> dict:
+def _view_context(db: DbSession, subject: Subject, view: str, filter: str = "all") -> dict:
     files = _files(db, subject)
     summary = {
         "total": len(files),
@@ -485,26 +530,44 @@ def _view_context(db: DbSession, subject: Subject, view: str) -> dict:
         "parsing": sum(f.status == "parsing" for f in files),
     }
     sync_auto_pairs(db, subject.id)
+    board = build_board(subject, files, pairs_by_subject(db, subject.id))
     context = {
         "subject": subject,
         "summary": summary,
         "view": view,
-        "pair_names": _pair_names(db, subject),
+        "statuses": _statuses(db, subject, files, board),
+        "names": _names(db, subject, files),
     }
     if view == "table":
         files.sort(
             key=lambda f: (f.week is None, f.week or 0, f.lecture or 0, f.type, f.filename.lower())
         )
-        context["files"] = files
+        filters = [("all", "All", len(files))]
+        if summary["review"]:
+            filters.append(("review", "Needs a check", summary["review"]))
+        for key, label, types in st.TABLE_FILTERS:
+            if n := sum(f.type in types for f in files):
+                filters.append((key, label, n))
+        if filter not in {k for k, _, _ in filters}:
+            filter = "all"
+        types = dict((k, t) for k, _, t in st.TABLE_FILTERS)
+        if filter == "review":
+            files = [f for f in files if f.needs_review]
+        elif filter in types:
+            files = [f for f in files if f.type in types[filter]]
+        context.update(files=files, filters=filters, filter=filter)
     else:
-        context["board"] = build_board(subject, files, pairs_by_subject(db, subject.id))
+        context["board"] = board
     return context
 
 
-def _render_view(request: Request, db: DbSession, subject: Subject, view: str) -> HTMLResponse:
+def _render_view(
+    request: Request, db: DbSession, subject: Subject, view: str, filter: str = "all"
+) -> HTMLResponse:
     if view not in Views:
         raise HTTPException(404, "Unknown view")
-    return templates.TemplateResponse(request, f"_{view}.html", _view_context(db, subject, view))
+    context = _view_context(db, subject, view, filter)
+    return templates.TemplateResponse(request, f"_{view}.html", context)
 
 
 def _after_change(request: Request, db: DbSession, file: File, view: str) -> HTMLResponse:

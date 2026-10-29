@@ -1,12 +1,42 @@
+<div class="page-intro stacked">
+  <a class="back-link" href="/subjects/{{ subject.id }}">← Back to board</a>
+  <div class="page-intro-row">
+    <div class="page-intro-text">
+      <h1>Review files</h1>
+      <p class="lede">Check how each file was sorted. Changes save as you make them.</p>
+    </div>
+    <div class="page-actions">
+      <button type="button" class="btn btn-primary" data-upload>{% include "icons/upload.svg" %}Upload files</button>
+    </div>
+  </div>
+</div>
+
 {% include "_summary.html" %}
+
+<div class="filter-row">
+  <nav class="filter-chips" aria-label="Filter files">
+    {% for key, label, count in filters %}
+    <a class="fchip {{ 'on' if key == filter }} {{ 'fchip-warn' if key == 'review' }}"
+       href="/subjects/{{ subject.id }}?view=table&filter={{ key }}"
+       hx-get="/subjects/{{ subject.id }}/view/table?filter={{ key }}" hx-target="#view"
+       hx-push-url="/subjects/{{ subject.id }}?view=table&filter={{ key }}"
+       {% if key == filter %}aria-current="true"{% endif %}>{{ label }} · {{ count }}</a>
+    {% endfor %}
+  </nav>
+  <span class="filter-note">Readings are left out unless you include them</span>
+</div>
+
 {% if files %}
-<p class="hint">Changes save as you make them. Highlighted rows are low-confidence guesses: fix them or press ✓.</p>
-<div class="table-wrap">
+<div class="table-card">
   <table class="files">
     <thead>
       <tr>
-        <th>Name</th><th>Type</th><th>Week</th><th>Lecture</th><th>Size</th>
-        <th>Uploaded</th><th>Timestamps</th><th>Included</th><th>Guess</th><th>Processing</th><th></th>
+        <th scope="col">File</th>
+        <th scope="col" class="col-type">Type</th>
+        <th scope="col" class="col-num">Week</th>
+        <th scope="col" class="col-num">Lecture</th>
+        <th scope="col" class="col-status">Status</th>
+        <th scope="col" class="col-actions"><span class="sr-only">Actions</span></th>
       </tr>
     </thead>
     <tbody>
@@ -14,6 +44,8 @@
     </tbody>
   </table>
 </div>
+{% elif filter != "all" %}
+<p class="empty">Nothing matches this filter.</p>
 {% else %}
-<p class="empty">No files yet. Drop some above.</p>
+<p class="empty">No files yet. Drop some anywhere on this page.</p>
 {% endif %}

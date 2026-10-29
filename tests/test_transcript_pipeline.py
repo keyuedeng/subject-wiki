@@ -184,9 +184,9 @@ def test_viewer_transcript_view_and_board(web, db, queue, lecture, subject):
     exam_only = web.get(f"/files/{vtt.id}/transcript?flag=exam_hint").text
     assert exam_only.count('class="seg"') == 1
 
-    # Board: the transcript sits with its deck.
+    # Board: the transcript sits beside its deck, linked to the transcript view.
     board = web.get(f"/subjects/{subject.id}/view/board").text
-    assert "with " in board and "View transcript" in board
+    assert "matched to slides" in board and f'href="/files/{vtt.id}/transcript"' in board
 
 
 def test_slide_link_resolves_build_steps(web, db, queue, lecture):

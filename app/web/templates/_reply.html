@@ -1,0 +1,2 @@
+{#- An answer or a coverage list. Expects `r` and `subject`. -#}
+{% if r.kind == "where" %}{% include "_msg_where.html" %}{% else %}{% include "_msg_answer.html" %}{% endif %}

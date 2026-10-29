@@ -38,8 +38,19 @@ is `docs/spec.md`, which lists the phases under "Build plan".
   - Known gap: "worked example" is flagged too broadly (analogies count). Tighten it in
     the next cleaning-prompt change (that re-runs every window, about $0.27 per
     lecture).
-- **Not built yet:** embeddings for search and retrieval (phase 4). pgvector is enabled
-  but unused.
+- **Phase 4, part 1 is done: index, hybrid search and cited Q&A over lectures** (slides,
+  lecturer notes, transcripts). Checked on SWEN30006 (154 chunks, $0.0065 to embed).
+  Answers cost about $0.005–0.009 and "where" lists about $0.014; repeats cost $0.
+  - **Next (part 2, after the user has tried Q&A):** tutorials and solutions (sections,
+    type/coverage labels, pairing, viewer), the board's four-column layout, then the
+    eval (`qa-eval.csv`, recall@5 for keyword/embedding/hybrid).
+  - The approved decisions are in the phase 4 plan. Tutorials belong to their board
+    week; ignore week numbers inside tutorial files.
+  - The database has two SWEN30006 subjects; the older one (05:11) is empty.
+- **Phase 4 UI redesign is done** (matches `docs/design/` mockups): Ask is a chat with
+  saved conversations, streamed answers and a source preview panel; Board and Review
+  table restyled. Prompts are now `qa-v3` (topic + follow-ups, earlier turns as context)
+  and `where-v2` (summary + follow-ups).
 
 ## Commands
 
@@ -56,6 +67,8 @@ is `docs/spec.md`, which lists the phases under "Build plan".
   boundary windows
 - `uv run python -m scripts.align_eval <sheet.csv> [--sweep]`: alignment accuracy, and
   optionally a sweep over penalty settings (cached embeddings, no API cost)
+- `uv run python -m scripts.reindex <subject>`: build or refresh a subject's search index
+  (code, name or id; unchanged chunks cost nothing)
 - `uv run python -m scripts.compare_clean <transcript> --model gpt-6-luna --n 15`: compare
   two cleaning models side by side in HTML
 
@@ -76,9 +89,14 @@ is `docs/spec.md`, which lists the phases under "Build plan".
   "Lecture 5". Week/lecture numbers are stripped from titles because the UI shows them
   separately.
 - **Week board:** `services/board.py` places files into slots, pairs slides with
-  transcripts per lecture (`group_lectures`), and computes per-week completeness. A
-  week is complete when it has slides, a transcript for every lecture, and a tutorial.
-  The subject cards' "weeks complete" bar uses the same calculation.
+  transcripts per lecture (`group_lectures`), groups tutorials with their solutions
+  (`group_tutorials`: shared filename number, else the week's only tutorial), and computes
+  per-week completeness. Four columns: Lecture, Lecture transcript, Tutorial (questions +
+  solutions in one card), Other. A week is complete when it has slides, a transcript for
+  every lecture, and a tutorial; missing solutions are never a gap. Solutions with a week
+  are stored in the `tutorials` slot. `transcripts` and `week` slots are drop targets
+  only. The subject cards' "weeks complete" bar uses the same calculation.
+- **Status lines and type labels** for the board and table live in `web/status.py`.
 - **The classifier's guess is never overwritten.** User edits change
   type/week/lecture and set `reviewed = true`. `classify_*` keeps the original guess.
 - **Dedupe:** unique `(subject_id, sha256)`. A duplicate is detected before anything is
@@ -96,10 +114,13 @@ is `docs/spec.md`, which lists the phases under "Build plan".
   hard-code, print or log them. Call `.get_secret_value()` only where the value is
   used. `.env` is git-ignored, and `.env.example` documents the keys.
 - **Frontend:** server-rendered Jinja + HTMX (vendored at `app/web/static/htmx.min.js`).
-  The only custom JS is `upload.js`, which handles page-wide file drops, per-file
-  progress, placeholder chips and instant chip moves (the server re-renders the board
-  afterwards). The subjects page uses a native `<dialog>`. Every page shares one
-  content width (`--width`, 1120px). There is no build step. Phase 7 may add a SvelteKit/Next.js app against
+  Custom JS: `upload.js` (page-wide file drops, per-file progress, placeholder cards,
+  instant moves; the server re-renders the board afterwards; any `[data-upload]` opens
+  the picker) and `ask.js` (composer, streaming, source panel). The subjects page uses a
+  native `<dialog>`. Design tokens (mockup colours, Inter, JetBrains Mono) are CSS
+  variables at the top of `style.css`, with dark-mode values. Content width is
+  `--width`, 1240px; the Ask page is full-bleed. Subject pages set
+  `{% block nav_active %}` to highlight the top nav (Wiki/Practice are placeholders). There is no build step. Phase 7 may add a SvelteKit/Next.js app against
   the `/api` routes.
 - **Uploads:** one request per file, 3 at a time. The accepted and rejected extension
   lists are in `patterns.py` and passed to the page as JSON, so the browser and server
@@ -159,6 +180,14 @@ is `docs/spec.md`, which lists the phases under "Build plan".
   with a warning rather than misaligned.
 - **Speaker notes** stay out of the model request and out of `content_json`.
 - **Model output** is rendered as markdown with raw HTML disabled.
+- **Control characters** (incl. U+0000, which some PDFs use for unmapped bullet glyphs)
+  are stripped from the text layer and speaker notes at extraction (`clean_text`):
+  Postgres text/JSONB can't store NUL, and one bad glyph failed a whole deck.
+- **Incomplete responses:** `OpenAIProvider.structured` checks the response status
+  before the SDK parses the JSON, so a cut-off output reports why. A `content_filter`
+  stop (e.g. transcribing a copyrighted comic) raises `OutputFiltered`; slide vision
+  treats it like a refusal (text layer, reason recorded, not cached) so the deck still
+  parses. Failed files show their stored error on hover on the board and table.
 
 ## Transcripts (phase 3)
 
@@ -199,6 +228,50 @@ is `docs/spec.md`, which lists the phases under "Build plan".
   re-parsed, its paired transcripts are re-queued, which costs nothing unless slide
   text changed. `/slides/{id}` resolves a collapsed page to its kept page.
 - **Decks take their title** from the parsed first pages.
+
+## Search and Q&A (phase 4)
+
+- **Index** (`app/search/`): `chunks.py` decides what gets indexed and as what text.
+  Kept slides, speaker notes (their own `notes` chunk) and transcript segments are
+  indexed; admin-flagged segments are not. `index.py` upserts chunks by derived id
+  (`chunk_id(subject, source_key)`) and only embeds chunks whose `content_hash` changed.
+  It runs after every parse or transcript job (`ParseQueue._index`), and the result goes
+  in `status_detail`.
+- **`chunks.tsv`** is a generated Postgres column (title A, body B, GIN index) that is
+  not mapped in the models, because SQLite tests can't have it. `embedding` is
+  `vector(1536)` with an HNSW index, so `EMBEDDING_DIMENSIONS` must stay 1536.
+- **Week, type and `included`** are read from `files` at query time, so board edits
+  apply without re-indexing.
+- **Search:** BM25 is computed in Python (`rank.py`) from term counts that Postgres FTS
+  returns, because `ts_rank` has no IDF. That is fused with pgvector nearest neighbours
+  by RRF (k=60, 50 from each list). `PgBackend` holds all the SQL; tests use
+  `tests/search_fixtures.MemoryBackend`, which has the same interface.
+- **Answers** (`app/qa/answer.py`, `qa-v2`): the top 8 chunks are sent as handles
+  S1..S8. `cited` is an enum of those handles, so the list can't name a source that
+  wasn't sent, and inline markers are validated by `check()`. If the best similarity is
+  under 0.2, the app answers "not covered" without a call. In-domain off-topic questions
+  still score about 0.4, so the model's `not_covered` is the real check.
+- **"Where" questions** (`app/qa/where.py`, `where-v1`): detected by regex, or forced
+  with mode=where. The top 40 fused results plus phrase matches are judged main or
+  mentioned in one call. Results are grouped by week, and neighbouring slides and
+  moments are collapsed.
+- **Citation labels and links** come from `qa/labels.py:SourceRef`. Transcript chips go
+  to `#seg-{idx}`, and notes chips go to the slide's `#notes`.
+- **Chats** (`chats`, `chat_messages`; `services/chat.py`, `web/ask.py`): titled from the
+  first question. An answer is stored as a snapshot (sources with labels, citations,
+  follow-ups) so old chats render the same after re-indexing or deletes. Follow-ups:
+  retrieval fuses a search of the question with one including the previous question;
+  the answer request gets the last 3 turns (citations stripped). "Where is this taught?"
+  with a pronoun uses the previous answer's topic.
+- **Streaming:** `POST /subjects/{id}/ask/stream` returns NDJSON events (start, status,
+  delta, done, error). A worker thread with its own session (`get_session_factory`)
+  answers and saves, so the answer is kept if the browser leaves. `LlmClient.structured(
+  on_text=...)` streams through `OpenAIProvider.structured_stream`; same cache key as a
+  non-streamed call, and cache hits return at once. `qa/stream.py` decodes the partial
+  `answer_markdown` and drops half-written `[S` markers.
+- **Source panel:** chips carry `data-preview` (`/ask/source/{chunk_id}`): slide image,
+  prev/next kept slide, lecturer notes, "What was said" with the cited moment
+  highlighted.
 
 ## Supabase notes
 

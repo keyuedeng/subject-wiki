@@ -1,5 +1,6 @@
-// Subject page: drop files anywhere to upload (or onto a board section to file them there),
-// per-file progress, and dragging chips between sections.
+// Subject page: drop files anywhere to upload (or onto a board cell to file them there),
+// per-file progress, and dragging files between cells. Any [data-upload] element opens the
+// file picker.
 // Uploads go one request per file, 3 at a time, so each file gets its own progress and result.
 (() => {
   const main = document.querySelector("main[data-subject-id]");
@@ -11,7 +12,6 @@
   const CHIP_MIME = "application/x-subject-wiki-file";
   const ICONS = { stored: "✓", duplicate: "↺", rejected: "✕", error: "✕" };
 
-  const dropzone = document.getElementById("dropzone");
   const input = document.getElementById("file-input");
   const uploads = document.getElementById("uploads");
   const list = document.getElementById("upload-list");
@@ -54,9 +54,16 @@
     if (hasFiles(e)) enqueue(e.dataTransfer.files);
   });
 
-  dropzone.addEventListener("click", () => input.click());
-  dropzone.addEventListener("keydown", (e) => {
-    if (e.key === "Enter" || e.key === " ") { e.preventDefault(); input.click(); }
+  // Upload buttons and the drop bar live inside #view, which is re-rendered: delegate.
+  document.addEventListener("click", (e) => {
+    if (e.target.closest("[data-upload]")) input.click();
+  });
+  document.addEventListener("keydown", (e) => {
+    const el = e.target.closest?.("[data-upload]");
+    if (el && el.tagName !== "BUTTON" && (e.key === "Enter" || e.key === " ")) {
+      e.preventDefault();
+      input.click();
+    }
   });
   input.addEventListener("change", () => { enqueue(input.files); input.value = ""; });
 
@@ -86,16 +93,6 @@
     else if (hasFiles(e)) enqueue(e.dataTransfer.files, target);
   });
 
-  // Lecture popovers: close when clicking elsewhere or pressing Escape.
-  document.addEventListener("click", (e) => {
-    document.querySelectorAll("details.lecture[open]").forEach((d) => {
-      if (!d.contains(e.target)) d.open = false;
-    });
-  });
-  document.addEventListener("keydown", (e) => {
-    if (e.key === "Escape") document.querySelectorAll("details.lecture[open]").forEach((d) => (d.open = false));
-  });
-
   // Move the chip on screen immediately, then save. The server answers with the
   // re-rendered board (lectures regroup, completeness updates); on failure, undo.
   async function moveChip(fileId, slot, target) {
@@ -105,8 +102,7 @@
     const origin = { parent: chip.parentElement, next: chip.nextSibling };
     chip.classList.remove("dragging");
     chip.classList.add("saving");
-    chip.closest("details.lecture")?.removeAttribute("open");
-    chips.querySelector(".none")?.remove();
+    chips.querySelector(".none, .drop-slot")?.remove();
     chips.appendChild(chip);
     updateUnsorted();
 
@@ -136,7 +132,7 @@
   }
 
   function updateUnsorted() {
-    const section = viewEl.querySelector(".board-section.unsorted");
+    const section = viewEl.querySelector(".needs-sorting");
     if (!section) return;
     const n = section.querySelectorAll(".chip[data-file-id]").length;
     const count = section.querySelector(".unsorted-count");
@@ -184,7 +180,8 @@
       return "Audio and video aren't supported yet. Upload the lecture's caption file (.vtt) or transcript (.txt) instead.";
     }
     if (!rules.accepted.includes(ext)) {
-      return `Unsupported file type (${ext ? "." + ext : "no extension"}). Accepted: PDF, PPTX, DOCX, VTT, SRT, TXT.`;
+      const accepted = rules.accepted.map((x) => x.toUpperCase()).join(", ");
+      return `Unsupported file type (${ext ? "." + ext : "no extension"}). Accepted: ${accepted}.`;
     }
     if (file.size === 0) return "File is empty.";
     if (file.size > rules.maxBytes) return `File is ${mb(file.size)} MB; the limit is ${mb(rules.maxBytes)} MB.`;
@@ -227,7 +224,6 @@
           finish(row, body.outcome, body.message);
           if (body.outcome === "stored") {
             changed = true;
-            dropzone.classList.add("slim");
             if (view === "board") refreshSoon();
           }
         } else {
@@ -314,20 +310,19 @@
         `.slot[data-slot="${item.target.slot}"]` +
         (item.target.week ? `[data-week="${item.target.week}"]` : ":not([data-week])") + " .chips");
       if (!chips) continue;
-      chips.querySelector(".none")?.remove();
+      chips.querySelector(".none, .drop-slot")?.remove();
       const ghost = document.createElement("div");
-      ghost.className = "chip ghost";
-      ghost.innerHTML = '<div class="chip-main"><span class="chip-title"></span></div><div class="chip-file">Uploading…</div>';
-      ghost.querySelector(".chip-title").textContent = item.file.name;
+      ghost.className = "chip card ghost";
+      ghost.innerHTML = '<span class="card-title"></span><span class="card-file">Uploading…</span>';
+      ghost.querySelector(".card-title").textContent = item.file.name;
       chips.appendChild(ghost);
       item.ghostEl = ghost;
     }
   }
 
   function slotLabel(target) {
-    const el = viewEl.querySelector(`.slot[data-slot="${target.slot}"] .slot-label`);
-    const label = el ? el.textContent : target.slot;
-    return target.week ? `Week ${target.week} ${label}` : label;
+    const sel = `.slot[data-slot="${target.slot}"]` + (target.week ? `[data-week="${target.week}"]` : "");
+    return viewEl.querySelector(sel)?.dataset.label || target.slot;
   }
 
   function mb(bytes, digits = 0) {

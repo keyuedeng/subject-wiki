@@ -4,16 +4,35 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>{% block title %}Subject Wiki{% endblock %}</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@500&display=swap">
   <link rel="stylesheet" href="/static/style.css">
   <script src="/static/htmx.min.js"></script>  <!-- htmx 2.0.4, vendored -->
 </head>
-<body>
+{#- Subject pages set `nav_active` to "board" or "ask" to highlight the top nav. -#}
+{% set active = self.nav_active() | trim %}
+<body class="{% block body_class %}{% endblock %}">
   <header class="topbar">
-    <div class="container"><a href="/" class="brand">Subject Wiki</a></div>
+    <a href="/" class="brand"><span class="brand-mark" aria-hidden="true">SW</span>Subject Wiki</a>
+    {% if subject is defined and subject %}
+    <a class="topbar-subject" href="/subjects/{{ subject.id }}">
+      <strong>{{ subject.code or subject.name }}</strong>
+      <span>{% if subject.code %}{{ subject.name }}{% endif %}{% if subject.semester %}{{ " · " if subject.code }}{{ subject.semester }}{% endif %}</span>
+    </a>
+    <nav class="subject-nav" aria-label="Subject sections">
+      <a href="/subjects/{{ subject.id }}" {% if active == "board" %}aria-current="page"{% endif %}>Board</a>
+      <a href="/subjects/{{ subject.id }}/ask" {% if active == "ask" %}aria-current="page"{% endif %}>Ask</a>
+      <span class="nav-soon" aria-disabled="true" title="Coming in a later phase">Wiki</span>
+      <span class="nav-soon" aria-disabled="true" title="Coming in a later phase">Practice</span>
+    </nav>
+    {% endif %}
   </header>
+  {% block body %}
   <main class="container page" {% block main_attrs %}{% endblock %}>
     {% block content %}{% endblock %}
   </main>
+  {% endblock %}
   <div id="toast" class="toast" role="status" aria-live="polite" hidden></div>
   <script>
     // Show server error messages (422/502) from HTMX requests instead of failing silently.
@@ -34,3 +53,4 @@
   {% block scripts %}{% endblock %}
 </body>
 </html>
+{% if false %}{% block nav_active %}{% endblock %}{% endif %}

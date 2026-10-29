@@ -4,6 +4,9 @@
   The SDK client is created on the first real call, so cache lookups need no API key.
 - `LlmClient` wraps a provider with the request-hash cache (app/llm/cache.py): callers
   describe a request, and only requests never made before are paid for.
+- Streaming: `structured(..., on_text=...)` passes the raw JSON text to `on_text` as it
+  arrives, when the provider supports it (`structured_stream`). A cache hit returns at
+  once without calling `on_text`; the stored result is the same either way.
 """
 
 from collections.abc import Callable
@@ -20,6 +23,16 @@ EMBED_BATCH = 96  # inputs per embeddings request
 
 class ProviderError(Exception):
     pass
+
+
+class OutputFiltered(ProviderError):
+    """The provider's content filter stopped the output part-way (e.g. the model began
+    reproducing a copyrighted comic). Retrying gives the same result, so callers treat it
+    like a refusal."""
+
+    def __init__(self, usage: "Usage"):
+        super().__init__("Model response incomplete (content_filter)")
+        self.usage = usage
 
 
 @dataclass(frozen=True)
@@ -65,40 +78,100 @@ class OpenAIProvider:
         max_output_tokens: int,
         cache_hint: str | None = None,
     ) -> StructuredResponse:
-        """One structured-output call. `content` is the user message's content parts."""
-        response = self.client().responses.parse(
-            model=model,
-            instructions=instructions,
-            input=[{"role": "user", "content": content}],
-            text_format=schema,
-            reasoning={"effort": effort},
-            max_output_tokens=max_output_tokens,
-            prompt_cache_key=cache_hint,  # routes requests sharing a prefix to one cache
-            store=False,
+        """One structured-output call. `content` is the user message's content parts.
+        The status is checked before the output is parsed: the SDK would otherwise fail on
+        cut-off JSON with a validation error that hides why it was cut off."""
+        raw = self.client().responses.with_raw_response.parse(
+            **_request(model, instructions, content, schema, effort, max_output_tokens, cache_hint)
         )
-        u = response.usage
-        usage = Usage(
-            input_tokens=u.input_tokens if u else 0,
-            cached_tokens=u.input_tokens_details.cached_tokens if u else 0,
-            output_tokens=u.output_tokens if u else 0,
-            reasoning_tokens=u.output_tokens_details.reasoning_tokens if u else 0,
-        )
-        if response.status == "incomplete":
-            reason = getattr(response.incomplete_details, "reason", None) or "unknown"
-            raise ProviderError(f"Model response incomplete ({reason})")
-        for item in response.output or []:
-            for part in getattr(item, "content", None) or []:
-                if getattr(part, "type", None) == "refusal":
-                    return StructuredResponse(None, usage, part.refusal or "refused")
-        if response.output_parsed is None:
-            raise ProviderError("Model returned no parseable output")
-        return StructuredResponse(response.output_parsed, usage)
+        body = raw.http_response.json()
+        if body.get("status") == "incomplete":
+            reason = (body.get("incomplete_details") or {}).get("reason") or "unknown"
+            _raise_incomplete(reason, _usage_from_dict(body.get("usage") or {}))
+        return _structured_result(raw.parse())
+
+    def structured_stream(
+        self,
+        *,
+        model: str,
+        instructions: str,
+        content: list[dict],
+        schema: type[BaseModel],
+        effort: str,
+        max_output_tokens: int,
+        on_text: Callable[[str], None],
+        cache_hint: str | None = None,
+    ) -> StructuredResponse:
+        """Like `structured`, passing each piece of the output's JSON text to `on_text`."""
+        request = _request(model, instructions, content, schema, effort, max_output_tokens,
+                           cache_hint)  # fmt: skip
+        with self.client().responses.stream(**request) as stream:
+            for event in stream:
+                if event.type == "response.output_text.delta":
+                    on_text(event.delta)
+                elif event.type == "response.incomplete":
+                    r = event.response
+                    reason = getattr(r.incomplete_details, "reason", None) or "unknown"
+                    _raise_incomplete(reason, _usage(r.usage))
+            response = stream.get_final_response()
+        return _structured_result(response)
 
     def embed(self, *, model: str, texts: list[str], dimensions: int) -> tuple[list, int]:
         """Vectors in input order, and the input tokens used."""
         response = self.client().embeddings.create(model=model, input=texts, dimensions=dimensions)
         vectors = [d.embedding for d in sorted(response.data, key=lambda d: d.index)]
         return vectors, response.usage.prompt_tokens if response.usage else 0
+
+
+def _request(model, instructions, content, schema, effort, max_output_tokens, cache_hint) -> dict:
+    return {
+        "model": model,
+        "instructions": instructions,
+        "input": [{"role": "user", "content": content}],
+        "text_format": schema,
+        "reasoning": {"effort": effort},
+        "max_output_tokens": max_output_tokens,
+        "prompt_cache_key": cache_hint,  # routes requests sharing a prefix to one cache
+        "store": False,
+    }
+
+
+def _usage(u) -> Usage:
+    return Usage(
+        input_tokens=u.input_tokens if u else 0,
+        cached_tokens=u.input_tokens_details.cached_tokens if u else 0,
+        output_tokens=u.output_tokens if u else 0,
+        reasoning_tokens=u.output_tokens_details.reasoning_tokens if u else 0,
+    )
+
+
+def _usage_from_dict(u: dict) -> Usage:
+    return Usage(
+        input_tokens=u.get("input_tokens") or 0,
+        cached_tokens=(u.get("input_tokens_details") or {}).get("cached_tokens") or 0,
+        output_tokens=u.get("output_tokens") or 0,
+        reasoning_tokens=(u.get("output_tokens_details") or {}).get("reasoning_tokens") or 0,
+    )
+
+
+def _raise_incomplete(reason: str, usage: Usage):
+    if reason == "content_filter":
+        raise OutputFiltered(usage)
+    raise ProviderError(f"Model response incomplete ({reason})")
+
+
+def _structured_result(response) -> StructuredResponse:
+    usage = _usage(response.usage)
+    if response.status == "incomplete":
+        reason = getattr(response.incomplete_details, "reason", None) or "unknown"
+        _raise_incomplete(reason, usage)
+    for item in response.output or []:
+        for part in getattr(item, "content", None) or []:
+            if getattr(part, "type", None) == "refusal":
+                return StructuredResponse(None, usage, part.refusal or "refused")
+    if response.output_parsed is None:
+        raise ProviderError("Model returned no parseable output")
+    return StructuredResponse(response.output_parsed, usage)
 
 
 @dataclass(frozen=True)
@@ -165,10 +238,13 @@ class LlmClient:
             max_output_tokens=max_output_tokens,
         )  # fmt: skip
 
-    def call(self, req: "StructuredRequest") -> CallResult:
+    def call(
+        self, req: "StructuredRequest", on_text: Callable[[str], None] | None = None
+    ) -> CallResult:
         """Make the call (no cache, no database: safe to run in worker threads).
-        Refusals raise ProviderError and are never cached, so a later run can retry."""
-        result = self.provider.structured(
+        Refusals raise ProviderError and are never cached, so a later run can retry.
+        With `on_text`, the output streams in when the provider can stream."""
+        kwargs = dict(
             model=req.model,
             instructions=req.instructions,
             content=[{"type": "input_text", "text": req.input_text}],
@@ -177,6 +253,11 @@ class LlmClient:
             max_output_tokens=req.max_output_tokens,
             cache_hint=req.prompt_version,
         )
+        stream = getattr(self.provider, "structured_stream", None)
+        if on_text is not None and stream is not None:
+            result = stream(on_text=on_text, **kwargs)
+        else:
+            result = self.provider.structured(**kwargs)
         if result.parsed is None:
             raise ProviderError(f"Model refused: {result.refusal}")
         u = result.usage
@@ -195,12 +276,13 @@ class LlmClient:
             prompt_version=req.prompt_version,
         )  # fmt: skip
 
-    def structured(self, **kwargs) -> Cached:
-        """Lookup-or-call in one step (single-threaded callers)."""
+    def structured(self, on_text: Callable[[str], None] | None = None, **kwargs) -> Cached:
+        """Lookup-or-call in one step (single-threaded callers). `on_text` receives the
+        output's JSON text as it streams in (not called on a cache hit)."""
         req = self.structured_request(**kwargs)
         if hit := self.cache.get_many([req.key]).get(req.key):
             return Cached(hit.response, hit, True, req.key)
-        result = self.call(req)
+        result = self.call(req, on_text)
         self.store(req, result)
         return Cached(result.response, result, False, req.key)
 

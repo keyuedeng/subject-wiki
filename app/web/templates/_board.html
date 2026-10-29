@@ -1,71 +1,120 @@
+{%- set stats = board.stats -%}
+<div class="page-intro">
+  <div class="page-intro-text">
+    <h1>{{ subject.name }}</h1>
+    <p class="lede">{{ stats.weeks_with_lectures }} of {{ stats.weeks }} weeks have lectures · {{ stats.transcripts }} transcript{{ "" if stats.transcripts == 1 else "s" }} · {{ stats.tutorials }} tutorial{{ "" if stats.tutorials == 1 else "s" }}</p>
+  </div>
+  <div class="page-actions">
+    <a class="btn btn-secondary" href="/subjects/{{ subject.id }}?view=table">Review table
+      {%- if summary.review %} <span class="count-badge" title="Files to check">{{ summary.review }}</span>{% endif %}</a>
+    <button type="button" class="btn btn-primary" data-upload>{% include "icons/upload.svg" %}Upload files</button>
+  </div>
+</div>
+
+<div class="dropbar" data-upload tabindex="0" role="button" aria-label="Upload files: drop them anywhere on this page, or press Enter to choose">
+  <span>Drop files anywhere on this page, or onto a week to file them there.</span>
+  <span class="dropbar-types">{{ ACCEPTED_LABEL }}</span>
+</div>
+
 {% include "_summary.html" %}
 
-{#- A drop zone holding chips. `files` or `lectures` (LectureGroups) fill it. -#}
-{% macro zone(key, week=none, files=[], lectures=none, label=none, show_type=false, extra="") %}
-<div class="slot {{ extra }} {{ 'has-files' if files or lectures }}" data-slot="{{ key }}"
-     {% if week is not none %}data-week="{{ week }}"{% endif %}>
-  <span class="slot-label">{{ label or SLOTS[key].label }}</span>
+{% if board.unsorted %}
+<section class="board-block needs-sorting" aria-labelledby="unsorted-h">
+  <div class="block-head">
+    <h2 id="unsorted-h">Needs sorting <span class="count">· <span class="unsorted-count">{{ board.unsorted | length }}</span></span></h2>
+    <span class="block-note">Drag each file into its week, or confirm the guess.</span>
+  </div>
+  <div class="chips sort-list">
+    {% for f, note in board.unsorted %}{% with show_type = true %}{% include "_chip.html" %}{% endwith %}{% endfor %}
+  </div>
+</section>
+{% endif %}
+
+{#- A whole-subject card: its files, or a one-line reason to add some. -#}
+{% macro subject_card(key, title, reason, files) %}
+<div class="whole-card slot" data-slot="{{ key }}" data-label="{{ title }}">
+  <div class="whole-title">{{ title }}{% if files %} <span class="count">· {{ files | length }}</span>{% endif %}</div>
   <div class="chips">
-    {% if lectures %}
-      {% for group in lectures %}{% include "_lecture.html" %}{% endfor %}
-    {% else %}
-      {% for f in files %}{% include "_chip.html" %}{% endfor %}
-    {% endif %}
-    {% if not files and not lectures %}<span class="none">–</span>{% endif %}
+    {% for f in files %}{% with show_type = key == "subject_other" %}{% include "_chip.html" %}{% endwith %}
+    {% else %}<span class="none whole-reason">{{ reason }}</span>{% endfor %}
   </div>
 </div>
 {% endmacro %}
 
-{% if board.unsorted %}
-<details class="board-section unsorted" open>
-  <summary><h2>Unsorted <span class="count">· <span class="unsorted-count">{{ board.unsorted | length }}</span></span></h2></summary>
-  <p class="hint">Low-confidence guesses or files without a week. Drag each into place, or confirm the guess.</p>
-  <div class="chips">
-    {% for f, note in board.unsorted %}{% with show_type = true %}{% include "_chip.html" %}{% endwith %}{% endfor %}
-  </div>
-</details>
-{% endif %}
-
-<section class="board-section">
-  <h2>Whole subject</h2>
-  <div class="row subject-row">
-    {{ zone("outline", none, board.subject["outline"]) }}
-    {{ zone("exams", none, board.subject["exams"], label="Exams") }}
-    {{ zone("subject_other", none, board.subject["subject_other"], show_type=true) }}
+<section class="board-block" aria-labelledby="whole-h">
+  <h2 id="whole-h">Whole subject</h2>
+  <div class="whole-cards">
+    {{ subject_card("outline", "Subject outline", "Not uploaded. It sets the topic list for the wiki.", board.subject["outline"]) }}
+    {{ subject_card("exams", "Past exams", "Not uploaded. Practice exams copy their format.", board.subject["exams"]) }}
+    {{ subject_card("subject_other", "Other", "Assignment specs, cheat sheets, anything else.", board.subject["subject_other"]) }}
+    {% if board.readings %}
+    {{ subject_card("readings", "Readings", "Left out of search unless you include them.", board.readings) }}
+    {% endif %}
   </div>
 </section>
 
-<section class="board-section">
-  <h2>Weeks</h2>
-  <div class="week-columns" aria-hidden="true">
-    <span></span><span>Lectures</span><span>Tutorials</span><span>Solutions</span>
+{#- A drop placeholder for something a week is missing. -#}
+{% macro drop_slot(label) %}<div class="drop-slot">{{ label }}</div>{% endmacro %}
+
+<section class="board-block" aria-labelledby="weeks-h">
+  <div class="block-head">
+    <h2 id="weeks-h">Weeks</h2>
+    {% set gaps = board.still_to_add %}
+    <span class="block-note">
+      {%- if gaps -%}
+      Still to add:
+      {% for kind, weeks in gaps.items() %}{{ kind }} for {{ weeks_phrase(weeks) }}{{ ", " if not loop.last }}{% endfor %}
+      {%- elif board.complete_weeks -%}
+      Every week with files is complete
+      {%- endif -%}
+    </span>
   </div>
-  <ol class="weeks">
-    {% for row in board.rows %}
-    {% set c = row.completeness %}
-    <li class="row week-row {{ 'is-empty' if c.empty }} {{ 'complete' if c.complete }}">
-      <div class="week-head">
-        <span class="week-name">Week {{ row.week }}</span>
-        <span class="dots" role="img" title="{{ c.summary }}" aria-label="{{ c.summary }}">
-          <span class="dot {{ 'on' if c.slides }}"></span>
-          <span class="dot {{ 'on' if c.transcript else ('part' if c.lectures_with_transcript) }}"></span>
-          <span class="dot {{ 'on' if c.tutorial }}"></span>
-        </span>
+
+  <div class="week-table">
+    <div class="week-grid">
+      <div class="week-cols" aria-hidden="true">
+        <div>Week</div><div>Lecture</div><div>Lecture transcript</div><div>Tutorial</div><div>Other</div>
       </div>
-      {{ zone("lectures", row.week, lectures=row.lectures, extra="zone-lectures") }}
-      {{ zone("tutorials", row.week, row.slots["tutorials"]) }}
-      {{ zone("solutions", row.week, row.slots["solutions"]) }}
-      {{ zone("week_other", row.week, row.slots["week_other"], extra="zone-other") }}
-    </li>
-    {% endfor %}
-  </ol>
-  <p class="hint legend">
-    <span class="dot on"></span><span class="dot on"></span><span class="dot"></span>
-    slides · transcript for every lecture · tutorial. Hover a week for details.
-  </p>
+      {% for row in board.rows %}
+      {% set c = row.completeness %}
+      {% if c.empty %}
+      <div class="week-row is-empty slot" data-slot="week" data-week="{{ row.week }}" data-label="Week {{ row.week }}">
+        <div class="week-name">Week {{ row.week }}</div>
+        <div class="chips week-empty"><span class="none">Nothing uploaded</span></div>
+      </div>
+      {% else %}
+      <div class="week-row">
+        <div class="week-head">
+          <div class="week-name">Week {{ row.week }}</div>
+          {% if c.complete %}<div class="week-status ok">Complete</div>
+          {% else %}<div class="week-status warn" title="{{ c.summary }}">{{ c.missing }} missing</div>{% endif %}
+        </div>
+        <div class="lecture-cells">
+          {% for group in row.lectures %}
+          <div class="slot cell" data-slot="lectures" data-week="{{ row.week }}" data-label="Week {{ row.week }} lecture">
+            <div class="chips">{% for f in group.slides %}{% include "_card.html" %}{% else %}{{ drop_slot("Drop slides") }}{% endfor %}</div>
+          </div>
+          <div class="slot cell" data-slot="transcripts" data-week="{{ row.week }}" data-label="Week {{ row.week }} transcript">
+            <div class="chips">{% for f in group.transcripts %}{% include "_card.html" %}{% else %}{{ drop_slot("Drop transcript") }}{% endfor %}</div>
+          </div>
+          {% else %}
+          <div class="slot cell" data-slot="lectures" data-week="{{ row.week }}" data-label="Week {{ row.week }} lecture">
+            <div class="chips">{{ drop_slot("Drop slides") }}</div>
+          </div>
+          <div class="slot cell" data-slot="transcripts" data-week="{{ row.week }}" data-label="Week {{ row.week }} transcript">
+            <div class="chips">{{ drop_slot("Drop transcript") }}</div>
+          </div>
+          {% endfor %}
+        </div>
+        <div class="slot cell" data-slot="tutorials" data-week="{{ row.week }}" data-label="Week {{ row.week }} tutorial">
+          <div class="chips">{% for tg in row.tutorials %}{% include "_tutorial_card.html" %}{% else %}{{ drop_slot("Drop tutorial") }}{% endfor %}</div>
+        </div>
+        <div class="slot cell" data-slot="week_other" data-week="{{ row.week }}" data-label="Week {{ row.week }} other">
+          <div class="chips">{% for f in row.slots["week_other"] %}{% include "_card.html" %}{% else %}<span class="none">—</span>{% endfor %}</div>
+        </div>
+      </div>
+      {% endif %}
+      {% endfor %}
+    </div>
+  </div>
 </section>
-
-<details class="board-section readings">
-  <summary><h2>Readings <span class="count">· {{ board.readings | length }} · excluded by default</span></h2></summary>
-  <div class="row">{{ zone("readings", none, board.readings, label="Readings") }}</div>
-</details>

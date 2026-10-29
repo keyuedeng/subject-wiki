@@ -58,7 +58,7 @@ def test_placement():
         "slides": ("lectures", 3),
         "vtt": ("lectures", 3),
         "tute": ("tutorials", 4),
-        "tute sol": ("solutions", 4),
+        "tute sol": ("tutorials", 4),  # solutions sit in their tutorial's group
         "2023 Final Exam Solutions.pdf": ("exams", None),
         "Tute 4 solutions.pdf": ("unsorted", None),
         "exam": ("exams", None),
@@ -154,3 +154,43 @@ def test_week_completeness():
     assert week2.slides and not week2.transcript and not week2.tutorial
     assert week2.summary == "Slides ✓ · Transcript 1 of 2 lectures · Tutorial missing"
     assert week3.empty and not week3.complete
+
+
+def test_tutorials_group_with_their_solutions():
+    from app.services.board import group_tutorials
+
+    w4, w4b = make("Workshop_04.pdf", T.TUTORIAL, 4), make("Workshop_04b.pdf", T.TUTORIAL, 4)
+    sol = make("Partial_Solution_04.pdf", T.SOLUTIONS, 4)
+    # Shared number, or the week's only tutorial.
+    (group,) = group_tutorials([w4, sol])
+    assert (group.tutorials, group.solutions) == ([w4], [sol])
+    t1, t2 = make("Tute 1.pdf", T.TUTORIAL, 4), make("Tute 2.pdf", T.TUTORIAL, 4)
+    s2, s9 = make("Tute 2 solutions.pdf", T.SOLUTIONS, 4), make("answers.pdf", T.SOLUTIONS, 4)
+    groups = group_tutorials([t1, t2, s2, s9])
+    assert [(len(g.tutorials), [s.filename for s in g.solutions]) for g in groups] == [
+        (1, []), (1, ["Tute 2 solutions.pdf"]), (0, ["answers.pdf"])]  # fmt: skip
+    # Ambiguous number (both tutorials share "04"): the solution stays on its own.
+    assert len(group_tutorials([w4, w4b, sol])[-1].tutorials) == 0
+
+
+def test_missing_counts_still_to_add_and_stats():
+    from app.services.board import weeks_phrase
+
+    files = [
+        make("s4", T.SLIDES, 4, lecture=4), make("t4", T.TRANSCRIPT, 4, lecture=4),
+        make("tute4", T.TUTORIAL, 4), make("sol4", T.SOLUTIONS, 4),
+        make("s6", T.SLIDES, 6, lecture=6), make("s7", T.SLIDES, 7, lecture=7),
+        make("sol8", T.SOLUTIONS, 8),
+    ]  # fmt: skip
+    board = build_board(SUBJECT, files)
+    rows = {r.week: r.completeness for r in board.rows}
+    assert rows[4].complete and rows[4].missing == 0
+    assert rows[6].missing == 2  # transcript and tutorial; missing solutions never count
+    assert rows[8].missing == 3 and not rows[8].tutorial  # solutions alone aren't a tutorial
+    assert rows[1].empty and rows[1].missing == 0
+    assert board.still_to_add == {"slides": [8], "transcripts": [6, 7, 8],
+                                  "tutorials": [6, 7, 8]}  # fmt: skip
+    assert board.stats == {"weeks": 12, "weeks_with_lectures": 3, "transcripts": 1, "tutorials": 1}
+    assert weeks_phrase([6, 7]) == "weeks 6 and 7"
+    assert weeks_phrase([1, 2, 3, 5, 8]) == "weeks 1–3, 5 and 8"
+    assert weeks_phrase([4]) == "week 4"

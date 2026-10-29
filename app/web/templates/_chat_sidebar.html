@@ -1,0 +1,25 @@
+<a class="new-chat" href="/subjects/{{ subject.id }}/ask">
+  <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><path d="M8 3v10M3 8h10"/></svg>
+  New chat
+</a>
+<div class="chat-groups">
+  {% for heading, items in groups %}
+  <div class="chat-group">
+    <div class="group-label">{{ heading }}</div>
+    {% for c in items %}
+    {% set current = chat and c.id == chat.id %}
+    <div class="chat-item {{ 'current' if current }}">
+      <a href="/subjects/{{ subject.id }}/ask/{{ c.id }}" {% if current %}aria-current="page"{% endif %}>{{ c.title }}</a>
+      <button type="button" class="chat-del" aria-label="Delete chat “{{ c.title }}”"
+              hx-delete="/subjects/{{ subject.id }}/ask/{{ c.id }}{{ '?current=1' if current }}"
+              hx-target="#chat-sidebar" hx-confirm="Delete this chat?">✕</button>
+    </div>
+    {% endfor %}
+  </div>
+  {% else %}
+  <p class="sidebar-empty">Your chats will appear here.</p>
+  {% endfor %}
+</div>
+<div class="sidebar-foot">
+  Searching {{ stats.lectures }} lecture{{ "" if stats.lectures == 1 else "s" }} · {{ stats.sources }} sources
+</div>
