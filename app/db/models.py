@@ -206,6 +206,25 @@ class TranscriptDeck(Base):
     __table_args__ = (CheckConstraint("source IN ('auto', 'manual')", name="source_valid"),)
 
 
+class PairingSuggestion(Base):
+    """For a transcript that couldn't be paired automatically (several decks in its week
+    and no lecture number to tell them apart): the deck whose slide text best matches what
+    was said. Shown for the user to confirm; never used for processing until confirmed.
+    `candidates` is the set of decks it was chosen from, so it's recomputed when that
+    set changes."""
+
+    __tablename__ = "pairing_suggestions"
+
+    transcript_file_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("files.id", ondelete="CASCADE"), primary_key=True
+    )
+    slides_file_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("files.id", ondelete="CASCADE"))
+    score: Mapped[float] = mapped_column(Float)  # cosine similarity, 0-1
+    runner_up: Mapped[float | None] = mapped_column(Float)  # the next deck's score
+    candidates: Mapped[list] = mapped_column(JsonType)  # ["<deck id>:<status>", ...]
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
 class TranscriptSegment(Base):
     """One window (~30-60 s) of a transcript: raw and cleaned text, flags, and the
     slide it was aligned to (null = not matched to any slide)."""

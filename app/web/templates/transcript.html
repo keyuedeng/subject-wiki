@@ -37,7 +37,7 @@
     {% for deck, source in decks %}
     <li>
       <a href="/files/{{ deck.id }}/slides">{{ deck_names[deck.id] }}</a>
-      <span class="muted">{{ deck.filename }} · {{ "set by you" if source == "manual" else "matched by lecture number" }}</span>
+      <span class="muted">{{ deck.filename }} · {{ pair_reason(file, deck, source) }}</span>
       <form method="post" action="/files/{{ file.id }}/pairing/remove" class="inline">
         <input type="hidden" name="slides_id" value="{{ deck.id }}">
         <button type="submit" class="ghost small" aria-label="Unpair {{ deck.filename }}">✕</button>
@@ -45,8 +45,19 @@
     </li>
     {% endfor %}
   </ol>
+  {% elif suggested %}
+  <div class="suggest-box">
+    <p><strong>Suggested: {{ suggested | file_title(subject) }}</strong>
+      <span class="muted">{{ suggested.filename }} ·
+        {% if suggestion.runner_up is none %}the only deck in this week{% else %}best text match ({{ "%.2f" | format(suggestion.score) }}, next best {{ "%.2f" | format(suggestion.runner_up) }}){% endif %}</span></p>
+    <form method="post" action="/files/{{ file.id }}/pairing/confirm" class="inline">
+      <input type="hidden" name="slides_id" value="{{ suggested.id }}">
+      <button type="submit" class="btn-small">Confirm and process</button>
+    </form>
+    <span class="muted">or pick a different deck below.</span>
+  </div>
   {% else %}
-  <p class="muted">Not paired yet: no slides file has the same lecture number. Pick the deck(s) this lecture covered.</p>
+  <p class="muted">Not paired yet: its week has several decks and no lecture number to tell them apart. Pick the deck(s) this lecture covered.</p>
   {% endif %}
   <div class="pairing-actions">
     {% if subject_decks %}

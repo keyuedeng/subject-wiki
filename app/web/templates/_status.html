@@ -5,6 +5,16 @@
   {%- if s.tone == "busy" %}<span class="spinner" aria-hidden="true"></span>{% endif -%}
   {%- if s.reason %}<span class="has-reason" title="{{ s.reason }}" tabindex="0" aria-label="{{ s.text }}: {{ s.reason }}">{{ s.text }}</span>
   {%- else %}{{ s.text }}{% endif -%}
+  {%- if s.suggestion %}
+  <span class="suggestion" title="{{ s.suggestion.detail }}">Suggested: {{ s.suggestion.deck_title }}</span>
+  <button type="button" class="btn-small suggestion-confirm"
+          hx-post="/files/{{ f.id }}/pairing/confirm?view={{ status_view }}"
+          hx-vals='{"slides_id": "{{ s.suggestion.deck_id }}"}'
+          {% if status_view == "board" %}hx-target="#view"{% endif %}>Confirm and process</button>
+  <a class="suggestion-other" href="/files/{{ f.id }}/transcript">Choose another</a>
+  {%- elif s.tone == "warn" and is_transcript(f) and s.text.startswith("Pairing needed") %}
+  <a class="suggestion-other" href="/files/{{ f.id }}/transcript">Choose deck</a>
+  {%- endif -%}
   {%- if s.action and can_queue(f) %}
   <button type="button" class="link-button" hx-post="/files/{{ f.id }}/parse?view={{ status_view }}"
           {% if status_view == "board" %}hx-target="#view"{% endif %}>{{ s.action }}</button>

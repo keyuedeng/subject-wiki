@@ -150,6 +150,25 @@ class Completeness:
     lectures_with_transcript: int
     tutorial: bool
     empty: bool
+    # Lecture files that are there but not usable yet. Any of these keeps the week from
+    # being complete, and the status says which.
+    unpaired: int = 0  # transcripts with no deck
+    processing: int = 0  # decks or transcripts being parsed / processed
+    failed: int = 0
+    unprocessed: int = 0  # uploaded, not parsed or processed yet
+
+    @property
+    def blocker(self) -> str | None:
+        """Why a week with all its files still isn't ready, most urgent first."""
+        if self.unpaired:
+            return "Pairing needed"
+        if self.processing:
+            return "Processing"
+        if self.failed:
+            return "Processing failed"
+        if self.unprocessed:
+            return "Not processed yet"
+        return None
 
     @property
     def missing(self) -> int:
@@ -165,7 +184,7 @@ class Completeness:
 
     @property
     def complete(self) -> bool:
-        return self.slides and self.transcript and self.tutorial
+        return self.slides and self.transcript and self.tutorial and self.blocker is None
 
     @property
     def summary(self) -> str:
@@ -317,13 +336,20 @@ def group_lectures(files: list[File], pairs: dict | None = None) -> list[Lecture
 
 
 def _week_row(week: int, slots: dict[str, list[File]], pairs: dict | None = None) -> WeekRow:
+    pairs = pairs or {}
     lectures = group_lectures(slots["lectures"], pairs)
+    files = slots["lectures"]
+    status = [f.status for f in files]
     completeness = Completeness(
         slides=any(g.slides for g in lectures),
         lectures=len(lectures),
         lectures_with_transcript=sum(bool(g.transcripts) for g in lectures),
         tutorial=any(f.type == T.TUTORIAL.value for f in slots["tutorials"]),
         empty=not any(slots.values()),
+        unpaired=sum(f.type == T.TRANSCRIPT.value and not pairs.get(f.id) for f in files),
+        processing=status.count("parsing"),
+        failed=status.count("failed"),
+        unprocessed=status.count("uploaded"),
     )
     others = {k: v for k, v in slots.items() if k != "lectures"}
     return WeekRow(week, lectures, others, completeness, group_tutorials(slots["tutorials"]))

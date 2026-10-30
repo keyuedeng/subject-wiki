@@ -1,3 +1,5 @@
+import uuid
+
 import pytest
 
 from app.classify.types import FileType as T
@@ -5,8 +7,10 @@ from app.db.models import File, Subject
 from app.services.board import SlotError, build_board, group_lectures, resolve_slot
 
 
-def make(name, ftype, week=None, confidence=0.85, reviewed=False, lecture=None):
+def make(name, ftype, week=None, confidence=0.85, reviewed=False, lecture=None, status="parsed"):
     return File(
+        id=uuid.uuid4(),
+        status=status,
         filename=name,
         type=ftype.value,
         week=week,
@@ -144,7 +148,8 @@ def test_week_completeness():
         make("L4.pdf", T.SLIDES, 2, lecture=4),
         make("L3.vtt", T.TRANSCRIPT, 2, lecture=3),
     ]
-    board = build_board(SUBJECT, files)
+    pairs = {files[1].id: [files[0].id], files[5].id: [files[3].id]}
+    board = build_board(SUBJECT, files, pairs)
     week1, week2, week3 = (
         board.rows[0].completeness,
         board.rows[1].completeness,
@@ -182,7 +187,7 @@ def test_missing_counts_still_to_add_and_stats():
         make("s6", T.SLIDES, 6, lecture=6), make("s7", T.SLIDES, 7, lecture=7),
         make("sol8", T.SOLUTIONS, 8),
     ]  # fmt: skip
-    board = build_board(SUBJECT, files)
+    board = build_board(SUBJECT, files, {files[1].id: [files[0].id]})
     rows = {r.week: r.completeness for r in board.rows}
     assert rows[4].complete and rows[4].missing == 0
     assert rows[6].missing == 2  # transcript and tutorial; missing solutions never count
@@ -194,3 +199,20 @@ def test_missing_counts_still_to_add_and_stats():
     assert weeks_phrase([6, 7]) == "weeks 6 and 7"
     assert weeks_phrase([1, 2, 3, 5, 8]) == "weeks 1–3, 5 and 8"
     assert weeks_phrase([4]) == "week 4"
+
+
+def test_week_is_not_complete_while_a_transcript_is_unpaired_or_processing():
+    deck, vtt = make("Wk 2.pdf", T.SLIDES, 2), make("F-transcript.vtt", T.TRANSCRIPT, 2)
+    tute = make("Tute 2.pdf", T.TUTORIAL, 2, status="uploaded")
+    week = lambda pairs: build_board(SUBJECT, [deck, vtt, tute], pairs).rows[1].completeness  # noqa: E731
+    # Shown side by side, but not paired: not complete.
+    unpaired = week({})
+    assert unpaired.lectures_with_transcript == 1 and unpaired.missing == 0
+    assert (unpaired.complete, unpaired.blocker) == (False, "Pairing needed")
+    paired = {vtt.id: [deck.id]}
+    assert week(paired).complete
+    for status, label in [("parsing", "Processing"), ("failed", "Processing failed"),
+                          ("uploaded", "Not processed yet")]:  # fmt: skip
+        vtt.status = status
+        c = week(paired)
+        assert (c.complete, c.blocker) == (False, label)

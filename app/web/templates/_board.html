@@ -87,6 +87,7 @@
         <div class="week-head">
           <div class="week-name">Week {{ row.week }}</div>
           {% if c.complete %}<div class="week-status ok">Complete</div>
+          {% elif c.blocker %}<div class="week-status {{ 'busy' if c.blocker == 'Processing' else 'warn' }}" title="{{ c.summary }}{{ ' · ' ~ c.missing ~ ' missing' if c.missing }}">{{ c.blocker }}</div>
           {% else %}<div class="week-status warn" title="{{ c.summary }}">{{ c.missing }} missing</div>{% endif %}
         </div>
         <div class="lecture-cells">

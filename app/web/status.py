@@ -42,6 +42,24 @@ class Status:
     tone: str = ""  # "", "busy", "warn" or "error"
     action: str | None = None  # "Parse", "Process" or "Retry": a button that queues the file
     reason: str | None = None  # why it failed, shown on hover
+    suggestion: "Suggested | None" = None  # a deck to confirm, for unpaired transcripts
+
+
+@dataclass(frozen=True)
+class Suggested:
+    """A deck suggested for an unpaired transcript by text similarity."""
+
+    deck_id: uuid.UUID
+    deck_title: str
+    score: float
+    runner_up: float | None
+
+    @property
+    def detail(self) -> str:
+        """For the hover: how clear the choice was."""
+        if self.runner_up is None:
+            return f"The only deck in its week (text match {self.score:.2f})"
+        return f"Best text match {self.score:.2f}; next best deck {self.runner_up:.2f}"
 
 
 def failure_reason(f: File) -> str | None:
@@ -82,13 +100,16 @@ def file_status(
     duration_ms: int | None = None,
     paired_decks: list[str] | None = None,
     tutorial: str | None = None,
+    suggestion: Suggested | None = None,
 ) -> Status:
     if f.type == T.SLIDES.value:
         return _processed(f, f"{f.page_count} slides · parsed" if f.page_count else "Parsed",
                           "Parse", "not parsed yet")  # fmt: skip
     if f.type == T.TRANSCRIPT.value:
         if not paired_decks and f.status != "parsing":
-            return Status("Not paired with slides yet", "warn", reason=failure_reason(f))
+            if suggestion is not None:
+                return Status("Pairing needed", "warn", suggestion=suggestion)
+            return Status("Pairing needed: choose its deck", "warn", reason=failure_reason(f))
         if f.status == "parsed":
             length = f"{round(duration_ms / 60000)} min · " if duration_ms else ""
             return Status(f"{length}matched to slides" if f.has_timestamps

@@ -27,6 +27,12 @@ is `docs/spec.md`, which lists the phases under "Build plan".
 - **Known gaps:** the model sometimes copies the running header into its markdown.
   Section-divider collages go to vision (about $0.012 each); this was left as is on
   purpose.
+- **Queued for the next slide prompt change** (don't edit `SYSTEM_PROMPT` or re-parse
+  just for these; batch them, since any edit re-pays every vision page):
+  - Comics, memes and third-party images: describe what they show and their point
+    instead of transcribing them, so OpenAI's content filter doesn't stop the output
+    (INFO30006 "Wk 2 - Authentication" p68, an xkcd comic, currently falls back to its
+    text layer). Bump `PROMPT_VERSION` with it.
 - **Phase 3 is done: the transcript pipeline.** Checked on the real SWEN30006 GRASP
   Part I lecture (55 min VTT, filed under Week 4 with its deck). 63 windows were cleaned
   and flagged for $0.27; re-runs and deck re-parses cost $0.
@@ -93,7 +99,9 @@ is `docs/spec.md`, which lists the phases under "Build plan".
   (`group_tutorials`: shared filename number, else the week's only tutorial), and computes
   per-week completeness. Four columns: Lecture, Lecture transcript, Tutorial (questions +
   solutions in one card), Other. A week is complete when it has slides, a transcript for
-  every lecture, and a tutorial; missing solutions are never a gap. Solutions with a week
+  every lecture, and a tutorial, and none of its lecture files is blocked; missing
+  solutions are never a gap. Blockers, shown instead of "Complete": Pairing needed,
+  Processing, Processing failed, Not processed yet. Solutions with a week
   are stored in the `tutorials` slot. `transcripts` and `week` slots are drop targets
   only. The subject cards' "weeks complete" bar uses the same calculation.
 - **Status lines and type labels** for the board and table live in `web/status.py`.
@@ -199,9 +207,15 @@ is `docs/spec.md`, which lists the phases under "Build plan".
   `TranscriptProcessor` runs in the same worker as slides; a deck that isn't parsed yet
   is parsed first.
 - **Pairing:** `transcript_decks` holds one or more decks per transcript, in order. Auto
-  pairing matches lecture numbers, and weeks too when both have one. Manual pairing
-  (transcript view, or `PUT /api/files/{id}/pairing`) is never replaced; "reset" goes
-  back to automatic.
+  pairing: lecture number (and week, when both have one); else the week's only deck when
+  it's the week's only transcript (unless both have differing lecture numbers). Anything
+  else gets a `pairing_suggestions` row: the deck in its week with the most similar
+  slide text (TF-IDF, `transcripts/suggest.py`, no model call), shown on the board,
+  table and transcript view for the user to confirm ("Confirm and process" pairs it
+  manually and queues processing). Suggestions are recomputed when the week's decks or
+  their parse status change, and are never used until confirmed. Pairing clears a
+  "pair it first" failure. Manual pairing (transcript view, or
+  `PUT /api/files/{id}/pairing`) is never replaced; "reset" goes back to automatic.
 - **Cleaning** (`clean-v1`): the glossary is built from the paired decks' slide text,
   visual facts and speaker notes, with no model call (`glossary.py`). The request puts
   the shared parts first (prompt, then glossary) so they get cached-input prices.

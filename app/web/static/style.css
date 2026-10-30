@@ -283,6 +283,7 @@ body.dragging-files .drop-overlay { display: block; }
 .week-status { font-size: 12px; font-weight: 600; }
 .week-status.ok { color: var(--teal); }
 .week-status.warn { color: var(--amber); cursor: help; }
+.week-status.busy { color: var(--muted); cursor: help; }
 /* A week's lectures: one row per lecture, deck and transcript side by side. */
 .lecture-cells { grid-column: 2 / 4; display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
 
@@ -325,6 +326,11 @@ a.card-title:hover { color: var(--accent-strong); }
 .status-error { color: var(--danger); }
 .status .link-button { margin-left: 6px; font-size: inherit; }
 .has-reason { text-decoration: underline dotted; text-underline-offset: 2px; cursor: help; }
+.suggestion { display: block; color: var(--text-2); margin-top: 2px; cursor: help; }
+.suggestion-confirm { margin: 6px 8px 0 0; }
+.suggestion-other { font-size: 12px; font-weight: 600; white-space: nowrap; }
+.suggest-box { padding: 10px 12px; border-radius: 10px; background: var(--amber-soft); margin-bottom: .5rem; }
+.suggest-box p { margin: 0 0 6px; }
 .chip-status { font-size: 12px; }
 
 /* Compact chips: whole-subject files and files to sort */

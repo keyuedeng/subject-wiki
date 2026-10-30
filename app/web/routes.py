@@ -38,14 +38,24 @@ from app.services.files import FileEdit, apply_edit, apply_type, delete_file
 from app.storage.client import StorageError
 from app.transcripts.pairing import (
     decks_for,
+    pair_reason,
     pairs_by_subject,
+    refresh_suggestions,
     reset_to_auto,
     set_manual,
+    suggestions_by_subject,
     sync_auto_pairs,
 )
 from app.web import status as st
 
-router = APIRouter(include_in_schema=False)
+
+def _bind_storage(request: Request, storage: StorageDep) -> None:
+    """Pages built by shared helpers need storage to refresh pairing suggestions (they
+    read the transcript); keep it on the request rather than threading it through."""
+    request.state.storage = storage
+
+
+router = APIRouter(include_in_schema=False, dependencies=[Depends(_bind_storage)])
 templates = Jinja2Templates(directory=Path(__file__).parent / "templates")
 
 Views = ("board", "table")
@@ -83,6 +93,7 @@ def _render_markdown(text: str | None) -> str:
 templates.env.filters["clock"] = clock
 templates.env.filters["file_title"] = _file_title
 templates.env.filters["markdown"] = _render_markdown
+templates.env.globals["pair_reason"] = pair_reason
 templates.env.globals.update(
     can_parse=can_parse,
     can_queue=can_queue,
@@ -164,7 +175,7 @@ def subject_page(
             "view": view,
             "upload_rules": json.dumps(upload_rules),
             "upload_accept": ",".join(f".{e}" for e in sorted(patterns.ACCEPTED_EXTENSIONS)),
-            **_view_context(db, subject, view, filter),
+            **_view_context(db, subject, view, filter, request.state.storage),
         },
     )
 
@@ -345,6 +356,7 @@ def transcript_view(
     if not can_process_transcript(file):
         raise HTTPException(404, "Not a transcript")
     sync_auto_pairs(db, file.subject_id)
+    refresh_suggestions(db, request.state.storage, file.subject_id)
     decks = decks_for(db, file.id)
     segments = list(
         db.scalars(
@@ -385,6 +397,8 @@ def transcript_view(
         "prompt_versions": sorted({seg.prompt_version for seg in segments if seg.prompt_version}),
     }
     subject_decks = [f for f in _files(db, file.subject) if can_parse(f) and f.id not in paired]
+    suggestion = suggestions_by_subject(db, file.subject_id).get(file.id)
+    suggested = db.get(File, suggestion.slides_file_id) if suggestion else None
     return templates.TemplateResponse(
         request,
         "transcript.html",
@@ -394,6 +408,8 @@ def transcript_view(
             "decks": decks,
             "deck_names": deck_names,
             "subject_decks": sorted(subject_decks, key=lambda f: f.filename.lower()),
+            "suggestion": suggestion,
+            "suggested": suggested,
             "runs": runs,
             "stats": stats,
             "flag_counts": flag_counts,
@@ -406,7 +422,18 @@ def transcript_view(
 
 
 @router.post("/files/{file_id}/pairing/{action}")
-def change_pairing(file_id: uuid.UUID, action: str, db: DbSession, form: FormData) -> Response:
+def change_pairing(
+    request: Request,
+    file_id: uuid.UUID,
+    action: str,
+    db: DbSession,
+    queue: QueueDep,
+    form: FormData,
+    view: str = "",
+) -> Response:
+    """add / remove / reset, from the transcript view (redirects back to it), or confirm a
+    suggested deck: pairs it and processes the transcript; with `view` (board or row) the
+    updated board or table row is sent back."""
     file = file_or_404(db, file_id)
     if not can_process_transcript(file):
         raise HTTPException(404, "Not a transcript")
@@ -422,7 +449,13 @@ def change_pairing(file_id: uuid.UUID, action: str, db: DbSession, form: FormDat
         deck = db.get(File, deck_id)
         if deck is None or deck.subject_id != file.subject_id or not can_parse(deck):
             raise HTTPException(422, "Pick a slides file from this subject")
-        if action == "add":
+        if action == "confirm":
+            set_manual(db, file.id, [deck_id])
+            queue.enqueue(db, [file])
+            db.refresh(file)
+            if view in ("board", "row"):
+                return _after_change(request, db, file, view)
+        elif action == "add":
             set_manual(db, file.id, [*current, deck_id])
         elif action == "remove":
             set_manual(db, file.id, [d for d in current if d != deck_id])
@@ -445,6 +478,7 @@ def _pair_names(db: DbSession, subject: Subject) -> dict:
 
 def _row(request: Request, db: DbSession, file: File) -> HTMLResponse:
     subject = file.subject
+    _refresh_pairing(db, subject, request.state.storage)
     files = _files(db, subject)
     board = build_board(subject, files, pairs_by_subject(db, subject.id))
     return templates.TemplateResponse(
@@ -466,15 +500,25 @@ def _names(db: DbSession, subject: Subject, files: list[File]) -> dict:
     }
 
 
+def _refresh_pairing(db: DbSession, subject: Subject, storage) -> None:
+    sync_auto_pairs(db, subject.id)
+    if storage is not None:
+        refresh_suggestions(db, storage, subject.id)
+
+
 def _statuses(db: DbSession, subject: Subject, files: list[File], board) -> dict:
     """File id -> its status line on the board and in the table."""
     names = _pair_names(db, subject)
     titles = {f.id: _file_title(f, subject) for f in files}
     tutorials = st.tutorial_pairs(board, titles)
     lengths = st.durations(db, [f.id for f in files if f.type == FileType.TRANSCRIPT])
+    suggested = {
+        t: st.Suggested(s.slides_file_id, titles.get(s.slides_file_id, ""), s.score, s.runner_up)
+        for t, s in suggestions_by_subject(db, subject.id).items()
+    }
     return {
         f.id: st.file_status(f, duration_ms=lengths.get(f.id), paired_decks=names.get(f.id),
-                             tutorial=tutorials.get(f.id))
+                             tutorial=tutorials.get(f.id), suggestion=suggested.get(f.id))
         for f in files
     }  # fmt: skip
 
@@ -492,6 +536,7 @@ def _index(
         files_by_subject.setdefault(f.subject_id, []).append(f)
     cards = []
     for subject in subjects:
+        sync_auto_pairs(db, subject.id)
         files = files_by_subject[subject.id]
         cards.append(
             {
@@ -517,7 +562,10 @@ def _files(db: DbSession, subject: Subject) -> list[File]:
     return list(db.scalars(select(File).where(File.subject_id == subject.id)))
 
 
-def _view_context(db: DbSession, subject: Subject, view: str, filter: str = "all") -> dict:
+def _view_context(
+    db: DbSession, subject: Subject, view: str, filter: str = "all", storage=None
+) -> dict:
+    _refresh_pairing(db, subject, storage)
     files = _files(db, subject)
     summary = {
         "total": len(files),
@@ -529,7 +577,6 @@ def _view_context(db: DbSession, subject: Subject, view: str, filter: str = "all
         "unparsed": sum(can_queue(f) and f.status in ("uploaded", "failed") for f in files),
         "parsing": sum(f.status == "parsing" for f in files),
     }
-    sync_auto_pairs(db, subject.id)
     board = build_board(subject, files, pairs_by_subject(db, subject.id))
     context = {
         "subject": subject,
@@ -566,7 +613,7 @@ def _render_view(
 ) -> HTMLResponse:
     if view not in Views:
         raise HTTPException(404, "Unknown view")
-    context = _view_context(db, subject, view, filter)
+    context = _view_context(db, subject, view, filter, request.state.storage)
     return templates.TemplateResponse(request, f"_{view}.html", context)
 
 

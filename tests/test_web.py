@@ -82,11 +82,18 @@ def test_json_api_patch(client):
     assert client.patch(f"/api/files/{fid}", json={"type": None}).status_code == 422
 
 
-def test_subjects_page_shows_week_completeness(client):
+def test_subjects_page_shows_week_completeness(client, session_factory):
+    from app.db.models import File
+
     sid = create_subject(client)
     upload(client, sid, "COMP30027_Week1_Lecture1.pdf", b"slides 1")
     upload(client, sid, "COMP30027_Week1_Lecture1.vtt", b"WEBVTT\n")
     upload(client, sid, "Week 1 Tutorial.pdf", b"tute 1")
+    assert "0 of 12 weeks complete" in client.get("/").text  # lectures not processed yet
+    with session_factory() as db:
+        for f in db.query(File).filter(File.type.in_(["slides", "transcript"])):
+            f.status = "parsed"
+        db.commit()
     page = client.get("/").text
     assert "1 of 12 weeks complete" in page
     assert 'aria-valuenow="1"' in page
