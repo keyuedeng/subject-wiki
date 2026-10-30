@@ -184,7 +184,7 @@ class LlmCall(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
 
-TRANSCRIPT_FLAGS = ("exam_hint", "worked_example", "student_question", "admin")
+TRANSCRIPT_FLAGS = ("exam_hint", "worked_example", "analogy", "student_question", "admin")
 
 
 class TranscriptDeck(Base):

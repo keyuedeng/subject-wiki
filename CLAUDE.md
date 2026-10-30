@@ -41,9 +41,12 @@ is `docs/spec.md`, which lists the phases under "Build plan".
   - Accuracy is good enough for now: **no more tuning or labelling** unless asked.
   - Most remaining misses are one slide early (rough label times, plus lecturers
     previewing the next slide).
-  - Known gap: "worked example" is flagged too broadly (analogies count). Tighten it in
-    the next cleaning-prompt change (that re-runs every window, about $0.27 per
-    lecture).
+  - Cleaning prompt is `clean-v2` (2026-10-30): "worked example" narrowed to applying a
+    concept step by step to a specific case; everyday comparisons get an `analogy` flag.
+    All five transcripts were re-cleaned ($3.42): worked examples 80 -> 44, analogies 39.
+    Exam hints went 19 -> 15; the 4 lost were general emphasis ("super important"), not
+    assessment statements, and no window mentioning exams or assessment lacks a real
+    hint, so no keyword safeguard was added.
 - **Phase 4, part 1 is done: index, hybrid search and cited Q&A over lectures** (slides,
   lecturer notes, transcripts). Checked on SWEN30006 (154 chunks, $0.0065 to embed).
   Answers cost about $0.005–0.009 and "where" lists about $0.014; repeats cost $0.
@@ -216,7 +219,7 @@ is `docs/spec.md`, which lists the phases under "Build plan".
   their parse status change, and are never used until confirmed. Pairing clears a
   "pair it first" failure. Manual pairing (transcript view, or
   `PUT /api/files/{id}/pairing`) is never replaced; "reset" goes back to automatic.
-- **Cleaning** (`clean-v1`): the glossary is built from the paired decks' slide text,
+- **Cleaning** (`clean-v2`): the glossary is built from the paired decks' slide text,
   visual facts and speaker notes, with no model call (`glossary.py`). The request puts
   the shared parts first (prompt, then glossary) so they get cached-input prices.
   - Flags are judged on the raw text, and each quote is checked against it.

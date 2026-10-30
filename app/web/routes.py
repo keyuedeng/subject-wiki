@@ -100,6 +100,7 @@ templates.env.globals.update(
     FLAG_LABELS={
         "exam_hint": "Exam hint",
         "worked_example": "Worked example",
+        "analogy": "Analogy",
         "student_question": "Student question",
         "admin": "Admin",
     },

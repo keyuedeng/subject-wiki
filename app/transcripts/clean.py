@@ -18,7 +18,7 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
-CLEAN_PROMPT_VERSION = "clean-v1"
+CLEAN_PROMPT_VERSION = "clean-v2"
 MAX_OUTPUT_TOKENS = 4000
 MIN_KEPT = 0.85  # share of cleaned words that must come from the raw text or glossary
 MIN_HINT_KEPT = 0.7  # share of an exam hint's words that must survive cleaning
@@ -29,7 +29,7 @@ FILLERS = {
 }  # fmt: skip
 WORD_RE = re.compile(r"[a-z0-9]+(?:'[a-z]+)?")
 
-FlagType = Literal["exam_hint", "worked_example", "student_question", "admin"]
+FlagType = Literal["exam_hint", "worked_example", "analogy", "student_question", "admin"]
 
 CLEAN_PROMPT = """\
 You clean one window of an automatic lecture transcript for a study tool. The input has \
@@ -52,7 +52,12 @@ flags: judge these on the original window text, not your cleaned version. Each f
 gets a one-line reason and an exact quote copied from the original window.
 - exam_hint: the lecturer says something is assessed or important to know ("this will \
 be on the exam", "make sure you know", "a typical exam question", "you will be asked")
-- worked_example: the lecturer works through an example or exercise live
+- worked_example: the lecturer applies a concept step by step to a specific case from \
+the course, reasoning through to a result, e.g. checking Creator's conditions one by one \
+to decide which class should create BorrowingRecord. Not: naming an example, reading out \
+a slide's example without working it, or a comparison with everyday life.
+- analogy: the lecturer explains a concept by comparing it with something everyday or \
+outside the course (a restaurant kitchen, a car assembly line, a post office)
 - student_question: a student asks or answers a question
 - admin: logistics, assignments and deadlines, audio checks, breaks, introductions, \
 small talk

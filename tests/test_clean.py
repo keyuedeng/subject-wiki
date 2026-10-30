@@ -75,3 +75,13 @@ def test_glossary_from_slides_is_deterministic_and_ranked():
         assert term in g, term
     assert g.index("GRASP") < g.index("SWEN30006")  # more frequent first
     assert "The" not in g and "Use" not in g
+
+
+def test_analogy_is_its_own_flag_and_worked_example_is_narrow():
+    from app.transcripts.clean import CLEAN_PROMPT, CleanedWindow
+
+    flag = {"type": "analogy", "reason": "kitchen comparison", "quote": "like a restaurant"}
+    window = CleanedWindow.model_validate({"clean_text": "x", "flags": [flag]})
+    assert window.flags[0].type == "analogy"
+    assert "step by step to a specific case" in CLEAN_PROMPT
+    assert "Not: naming an example" in CLEAN_PROMPT

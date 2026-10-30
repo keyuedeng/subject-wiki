@@ -467,6 +467,7 @@ td.actions > * { vertical-align: middle; }
 .flag-exam_hint { background: #fde2e2; color: #9b1c1c; }
 .flag-worked_example { background: var(--t-tutorial); color: var(--text); }
 .flag-student_question { background: var(--accent-soft); color: var(--accent); }
+.flag-analogy { background: var(--surface-2); color: var(--text-2); }
 .flag-admin { background: var(--surface-2); color: var(--muted); }
 @media (prefers-color-scheme: dark) { .flag-exam_hint { background: #4a2626; color: #ffb4a8; } }
 .flag-reason { font-size: .78rem; color: var(--muted); }
