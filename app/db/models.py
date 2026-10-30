@@ -91,6 +91,9 @@ class File(Base):
 
     status: Mapped[str] = mapped_column(String(16), default=FileStatus.UPLOADED.value)
     status_detail: Mapped[str | None] = mapped_column(Text)
+    # Which process is working on the file, until when (app/jobs/lease.py).
+    lease_owner: Mapped[str | None] = mapped_column(String(80))
+    lease_until: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     page_count: Mapped[int | None] = mapped_column(SmallInteger)
 
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())

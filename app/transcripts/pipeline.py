@@ -17,6 +17,7 @@ from sqlalchemy.orm import Session
 
 from app.classify.types import FileStatus
 from app.db.models import File, Slide, TranscriptSegment
+from app.jobs.lease import Leases, held
 from app.llm.client import Cached, LlmClient
 from app.storage.client import Storage
 from app.transcripts.align import AlignParams, align, cosine_matrix
@@ -84,9 +85,16 @@ class TranscriptProcessor:
     parse_slides: Callable[[uuid.UUID], None] | None = None
     # Called after a successful run (e.g. to index the segments for search).
     on_processed: Callable[[uuid.UUID], None] | None = None
+    # Set by the queue; skips the run if another process is working on the file.
+    leases: Leases | None = None
 
     def process(self, file_id: uuid.UUID) -> None:
         """Run and record the outcome on the file; never raises."""
+        with held(self.leases, file_id, "processing") as ok:
+            if ok:
+                self._run(file_id)
+
+    def _run(self, file_id: uuid.UUID) -> None:
         try:
             summary = self._process(file_id)
         except Exception as exc:

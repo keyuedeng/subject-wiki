@@ -165,6 +165,13 @@ is `docs/spec.md`, which lists the phases under "Build plan".
   `slides` rows and runs in `app/jobs/worker.py`: one file at a time in a thread, pages
   concurrently. Job state lives in `files.status` (uploaded, parsing, parsed or failed,
   with the message in `status_detail`). Files left in `parsing` are re-queued on startup.
+- **Job leases** (`app/jobs/lease.py`): `files.lease_owner` / `lease_until`. Queuing
+  claims a file and every job claims it again on start (so direct `parse()` /
+  `process()` calls from scripts count too); a job skips a file another live process
+  holds. A daemon thread renews the process's leases every 30 s (TTL 90 s). Restarts
+  (including `fastapi dev` reloads) re-queue only `parsing` files whose lease has
+  expired, at startup and on every heartbeat, so a reload never starts a second paid
+  copy of a running job. Tests use `Leases(heartbeat=False)` and an injected clock.
 - **Template:** images, vector paths and text lines repeated on at least 60% of pages
   (logos, header bars, running headers) are ignored by routing and dedupe.
 - **Routing thresholds** in `parse/routing.py` were tuned on SWEN30006 L6/L7. A page

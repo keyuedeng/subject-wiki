@@ -19,6 +19,7 @@ from sqlalchemy.orm import Session
 from app.classify.titles import document_title
 from app.classify.types import FileStatus, FileType
 from app.db.models import File, Slide, slide_id
+from app.jobs.lease import Leases, held
 from app.llm.cache import CallResult, LlmCache, image_sha256, request_key
 from app.parse.dedupe import Duplicate, find_duplicates
 from app.parse.document import (
@@ -69,9 +70,16 @@ class Parser:
     concurrency: int = 4
     # Called after a successful parse (e.g. to re-align transcripts paired with this deck).
     on_parsed: Callable[[uuid.UUID], None] | None = None
+    # Set by the queue; skips the parse if another process is working on the file.
+    leases: Leases | None = None
 
     def parse(self, file_id: uuid.UUID) -> None:
         """Run a parse and record the outcome on the file; never raises."""
+        with held(self.leases, file_id, "parse") as ok:
+            if ok:
+                self._run(file_id)
+
+    def _run(self, file_id: uuid.UUID) -> None:
         try:
             summary = self._parse(file_id)
         except Exception as exc:

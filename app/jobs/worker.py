@@ -3,10 +3,12 @@ concurrently inside a file). Slides are parsed; transcripts are cleaned and alig
 finished file is then indexed for search (only chunks whose text changed are embedded).
 
 State lives in Postgres (files.status), so nothing is lost if the app restarts: files
-left in "parsing" are queued again on startup, and the request-hash cache makes that free
-for work already done. When a deck is re-parsed, transcripts paired with it are queued
-again so their alignment points at the new slide content (cached, so it costs nothing
-unless the slide text changed).
+left in "parsing" are queued again, and the request-hash cache makes that free for work
+already done. Only files whose lease has expired are re-queued (app/jobs/lease.py), so a
+restart never starts a second copy of a job another live process is running; this is
+checked at startup and on every lease heartbeat. When a deck is re-parsed, transcripts
+paired with it are queued again so their alignment points at the new slide content
+(cached, so it costs nothing unless the slide text changed).
 """
 
 import logging
@@ -14,12 +16,13 @@ import uuid
 from concurrent.futures import Executor, ThreadPoolExecutor
 from functools import lru_cache
 
-from sqlalchemy import select
+from sqlalchemy import or_, select
 from sqlalchemy.orm import Session
 
 from app.classify.types import FileStatus, FileType
 from app.config import get_settings
 from app.db.models import File
+from app.jobs.lease import Leases
 from app.llm.cache import LlmCache
 from app.llm.client import LlmClient, OpenAIProvider
 from app.parse.pipeline import Parser, can_parse
@@ -47,10 +50,15 @@ class ParseQueue:
         transcripts: TranscriptProcessor | None = None,
         executor: Executor | None = None,
         indexer: Indexer | None = None,
+        leases: Leases | None = None,
     ):
         self.parser = parser
         self.transcripts = transcripts
         self.indexer = indexer
+        self.leases = leases
+        parser.leases = leases
+        if transcripts is not None:
+            transcripts.leases = leases
         self.executor = executor or ThreadPoolExecutor(max_workers=1, thread_name_prefix="parse")
         parser.on_parsed = self._after_parse
         if transcripts is not None:
@@ -69,6 +77,8 @@ class ParseQueue:
             if can_queue(f) and f.status != FileStatus.PARSING.value
             and (self.transcripts is not None or not can_process_transcript(f))
         ]  # fmt: skip
+        if self.leases is not None:  # another process is already on it: leave it be
+            queued = [f for f in queued if self.leases.claim(f.id)]
         queued.sort(key=lambda f: f.type == FileType.TRANSCRIPT.value)  # decks first
         jobs = [(self._job(f.type), f.id) for f in queued]
         for f in queued:
@@ -79,11 +89,21 @@ class ParseQueue:
         return queued
 
     def resume(self) -> int:
-        """Re-queue files left in "parsing" by a previous run."""
+        """Re-queue interrupted jobs now, and keep checking on every lease heartbeat
+        (a process killed mid-job leaves a lease that only expires after LEASE_TTL)."""
+        if self.leases is not None:
+            self.leases.on_tick(self.reap)
+        return self.reap()
+
+    def reap(self) -> int:
+        """Queue files left in "parsing" with no live lease: their process has stopped."""
         with self.parser.session_factory() as db:
-            rows = db.execute(
-                select(File.id, File.type).where(File.status == FileStatus.PARSING.value)
-            ).all()
+            q = select(File.id, File.type).where(File.status == FileStatus.PARSING.value)
+            if self.leases is not None:
+                now = self.leases.clock()
+                q = q.where(or_(File.lease_until.is_(None), File.lease_until < now))
+            rows = db.execute(q).all()
+        rows = [(i, t) for i, t in rows if self.leases is None or self.leases.claim(i)]
         for file_id, file_type in rows:
             self.executor.submit(self._job(file_type), file_id)
         if rows:
@@ -123,6 +143,8 @@ class ParseQueue:
                 self.enqueue(db, files)
 
     def shutdown(self) -> None:
+        if self.leases is not None:
+            self.leases.stop()
         self.executor.shutdown(wait=False, cancel_futures=True)
 
 
@@ -166,4 +188,4 @@ def get_queue() -> ParseQueue:
         ),
     )
     indexer = Indexer(session_factory, llm, settings.embedding_model, settings.embedding_dimensions)
-    return ParseQueue(parser, transcripts, indexer=indexer)
+    return ParseQueue(parser, transcripts, indexer=indexer, leases=Leases(session_factory))
