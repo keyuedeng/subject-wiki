@@ -128,7 +128,7 @@ MIN_SPEECH_WORDS = 100
 MIN_FILLERS = 3
 
 # Accepted and rejected uploads.
-ACCEPTED_EXTENSIONS = {"pdf", "pptx", "docx", "vtt", "srt", "txt"}
+ACCEPTED_EXTENSIONS = {"pdf", "pptx", "docx", "ipynb", "vtt", "srt", "txt"}
 AUDIO_VIDEO_EXTENSIONS = {
     "mp3", "m4a", "wav", "aac", "flac", "ogg", "oga", "opus", "wma", "aiff",
     "mp4", "m4v", "mov", "mkv", "avi", "webm", "wmv", "flv", "mpeg", "mpg", "3gp",

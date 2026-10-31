@@ -1,0 +1,104 @@
+{% extends "base.html" %}
+{% block title %}{{ file | file_title(subject) }} · {{ "Solutions" if file.type == "solutions" else "Tutorial" }} · Subject Wiki{% endblock %}
+{% block nav_active %}board{% endblock %}
+{% set TYPE_NAMES = {"explanation": "Explanation", "worked_example": "Worked example",
+                     "exercise": "Exercise", "setup_admin": "Setup / admin"} %}
+{% block content %}
+<nav class="crumbs">
+  <a href="/">Subjects</a> / <a href="/subjects/{{ subject.id }}">{{ subject.name }}</a> / {{ "Solutions" if file.type == "solutions" else "Tutorial" }}
+</nav>
+<div class="viewer-head">
+  <div>
+    <h1>{{ file | file_title(subject) }}</h1>
+    <p class="muted">{{ file.filename }}{% if file.week is not none %} · filed in Week {{ file.week }}{% endif %}
+      {% if practises %} · <strong class="practises">{{ practises }}</strong>{% endif %}</p>
+  </div>
+  {% if file.status != "parsing" %}
+  <form method="post" action="/files/{{ file.id }}/parse?view=row"
+        hx-post="/files/{{ file.id }}/parse?view=row" hx-swap="none"
+        hx-on::after-request="location.reload()">
+    <button type="submit" class="btn-small" title="Unchanged sections reuse saved results at no cost">
+      {{ "Process again" if sections else "Process" }}</button>
+  </form>
+  {% endif %}
+</div>
+
+{% if file.status == "parsing" %}
+<p class="notice"><span class="spinner" aria-hidden="true"></span>{{ file.status_detail or "Working…" }} <a href="">Refresh</a></p>
+{% elif file.status == "failed" %}
+<p class="notice error">Last run failed: {{ file.status_detail }}</p>
+{% elif file.status == "parsed" and file.status_detail %}
+<p class="muted tute-summary">{{ file.status_detail }}</p>
+{% endif %}
+
+{% if sections %}
+<div class="viewer-stats">
+  <span>{{ counts.sections }} sections</span>
+  {% if counts.exercises %}<span>{{ counts.exercises }} exercises</span>{% endif %}
+  {% if file.type == "tutorial" %}
+  <span class="route-badge {{ 'route-duplicate' if counts.new else 'route-text' }}">{{ counts.new }} with a new concept</span>
+  {% if counts.exercises %}<span>{{ counts.with_solution }} of {{ counts.exercises }} exercises have a solution</span>{% endif %}
+  {% endif %}
+</div>
+
+<div class="tsections">
+  {% for s in sections %}
+  {% set admin = s.section_type == "setup_admin" %}
+  <section class="tsec {{ 'admin' if admin }}" id="{{ s.label | lower | replace(' ', '-') }}">
+    <header class="tsec-head">
+      <span class="tsec-label">{{ s.label }}</span>
+      <h2>{{ s.title }}</h2>
+      {% if s.section_type %}<span class="tchip type-{{ s.section_type }}">{{ TYPE_NAMES[s.section_type] }}</span>{% endif %}
+      {% if s.coverage == "new_concept" %}<span class="tchip cov-new">New concept</span>
+      {% elif s.coverage == "application" %}<span class="tchip cov-app">Applies lecture concepts</span>{% endif %}
+      {% if s.earliest_week and file.week and s.concepts | selectattr("earliest_week") | map(attribute="earliest_week") | select(">", file.week) | list %}
+      <span class="tchip ahead" title="Some concepts here are lectured after this tutorial's week">Ahead of lectures</span>{% endif %}
+      {% if s.page_start %}<span class="muted tsec-pages">p. {{ s.page_start }}{% if s.page_end != s.page_start %}–{{ s.page_end }}{% endif %}</span>{% endif %}
+    </header>
+
+    {% if s.concepts %}
+    <ul class="concepts">
+      {% for c in s.concepts %}
+      <li class="concept {{ c.status }}">
+        <span class="concept-name">{{ c.name }}</span>
+        {% if c.status == "covered" %}
+          {% for e in c.evidence %}<a class="cite cite-{{ e.source_type }}" href="{{ e.href }}" title="{{ e.title }}">{{ ICONS.get(e.source_type, "") }}{{ e.label }}</a>{% endfor %}
+          {% if c.earliest_week and file.week and c.earliest_week > file.week %}
+          <span class="tchip ahead">Ahead of lectures: taught in Week {{ c.earliest_week }}</span>{% endif %}
+        {% else %}
+          <span class="tchip cov-new">Not in your lectures</span>
+          {% if c.summary %}<p class="concept-summary">{{ c.summary }}</p>
+          {% else %}<p class="concept-summary muted">Used in tutorial, not explained in your material.</p>{% endif %}
+        {% endif %}
+      </li>
+      {% endfor %}
+    </ul>
+    {% endif %}
+
+    <details class="tsec-text" {{ "" if admin else "open" }}>
+      <summary>{{ "Show text" if admin else "Text" }} <span class="muted">· {{ s.words }} words</span></summary>
+      <div class="md">{{ s.text_md | markdown | safe }}</div>
+    </details>
+
+    {% if file.type == "tutorial" and s.is_exercise %}
+      {% set sol = solutions.get(s.solution_section_id) %}
+      {% if sol %}
+      <details class="solution">
+        <summary>Show solution <span class="muted">· {{ s.solution_source }} · {{ others[sol.file_id].filename }}, {{ sol.label }}</span></summary>
+        <div class="md">{{ sol.text_md | markdown | safe }}</div>
+      </details>
+      {% else %}
+      <p class="muted no-solution">No solution uploaded for this exercise.</p>
+      {% endif %}
+    {% endif %}
+    {% if file.type == "solutions" and answered.get(s.id) %}
+      {% set ex = answered[s.id] %}
+      <p class="answers">Answers <a href="/files/{{ ex.file_id }}/tutorial#{{ ex.label | lower | replace(' ', '-') }}">{{ ex.label }}</a> of {{ others[ex.file_id].filename }}</p>
+    {% endif %}
+  </section>
+  {% endfor %}
+</div>
+{% elif file.status != "parsing" %}
+<p class="empty">Not processed yet. Processing splits the sheet into sections{% if file.type == "tutorial" %} and labels each one: its type, the concepts it uses, and which lectures cover them{% endif %}.</p>
+{% endif %}
+{% endblock %}

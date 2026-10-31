@@ -120,7 +120,12 @@ _NUMBER_RE = re.compile(r"(?<![a-z\d])0*(\d{1,2})(?!\d)")
 
 
 def _numbers(f: File) -> set[int]:
-    stem = p.split_ext(f.filename)[0].lower()
+    return filename_numbers(f.filename)
+
+
+def filename_numbers(filename: str) -> set[int]:
+    """Numbers in a filename: "Workshop_04" and "Partial_Solution_04" share 4."""
+    stem = p.split_ext(filename)[0].lower()
     return {int(n) for n in _NUMBER_RE.findall(stem)}
 
 

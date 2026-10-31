@@ -197,3 +197,22 @@ def test_unreadable_file_falls_back_to_filename():
     guess = classify("Week 3 Lecture 5.pdf", Peek(error="could not read .pdf contents"), CODE)
     assert guess.type == T.SLIDES
     assert "could not read" in guess.reason
+
+
+def test_tutorial_week_written_in_the_file_wins_over_the_filename():
+    # Filed by the week it's taught: Workshop 4 is run in week 5, and the sheet says so.
+    text = "Workshop 4: Fundamental Design Patterns. Pre-Workshop Learning in Workshop 4 (Week 5)"
+    guess = classify("Week 4 Workshop.pdf", Peek(text=text), CODE)
+    assert (guess.type, guess.week) == (T.TUTORIAL, 5)
+    assert "week 5 written in the file (filename says 4)" in guess.reason
+    assert guess.confidence <= 0.7
+    sheet = classify("Workshop_04.pdf", Peek(text=text), CODE)  # workshop number isn't a week
+    assert (sheet.type, sheet.week) == (T.TUTORIAL, 5)
+    # Lecture slides keep the filename's week.
+    assert classify("Week 4 Lecture 7.pdf", Peek(text="Week 5 recap"), CODE).week == 4
+
+
+def test_jupyter_notebooks_are_tutorials_unless_named_solutions():
+    assert classify("week3_lab.ipynb", Peek(text="# Lab 3"), CODE).type == T.TUTORIAL
+    assert classify("Tutorial 3 notebook.ipynb", Peek(), CODE).type == T.TUTORIAL
+    assert classify("Week 3 solutions.ipynb", Peek(), CODE).type == T.SOLUTIONS

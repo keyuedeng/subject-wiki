@@ -34,6 +34,10 @@ class Settings(BaseSettings):
     embedding_model: str = "text-embedding-3-large"
     embedding_dimensions: int = 1536
 
+    # Phase 4: tutorial sections (type, concepts, lecture coverage).
+    tutorial_model: str = "gpt-6.1-sol"
+    tutorial_effort: str = "low"
+
     # Phase 4: cited Q&A and "where is X taught" answers.
     qa_model: str = "gpt-6.1-sol"
     qa_effort: str = "low"

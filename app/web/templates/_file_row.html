@@ -1,7 +1,8 @@
 {#- One row of the review table. Edits save on change and send back this row. -#}
 {%- set title = names.get(f.id) or (f | file_title(subject)) -%}
-{%- set href = ("/files/" ~ f.id ~ "/transcript") if is_transcript(f) and f.status == "parsed"
-               else (("/files/" ~ f.id ~ "/slides") if can_parse(f) and f.status == "parsed" else none) -%}
+{%- set href = none if f.status != "parsed" else ("/files/" ~ f.id ~ "/transcript" if is_transcript(f)
+               else ("/files/" ~ f.id ~ "/slides" if can_parse(f)
+               else ("/files/" ~ f.id ~ "/tutorial" if is_sheet(f) else none))) -%}
 <tr id="file-{{ f.id }}" class="{{ 'review' if f.needs_review }} {{ 'excluded' if not f.included }}"
     hx-target="this" hx-swap="outerHTML"
     {% if f.status == "parsing" %}hx-get="/files/{{ f.id }}/row" hx-trigger="every 2s"{% endif %}>

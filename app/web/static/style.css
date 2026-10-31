@@ -318,7 +318,10 @@ a.card-title:hover { color: var(--accent-strong); }
 .card-file { font-size: 12px; color: var(--muted-2); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .card-status { font-size: 12px; color: var(--text-2); padding-top: 4px; }
 .tute-files { display: flex; flex-direction: column; gap: 2px; }
-.tute-file { font-size: 12px; color: var(--muted-2); padding-right: 22px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.tute-file { font-size: 12px; color: var(--muted-2); padding-right: 22px; display: flex; flex-direction: column; }
+.tute-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.tute-file .card-status { padding-top: 0; }
+.practises { font-size: 12px; font-weight: 600; color: var(--accent-strong); }
 .tute-file > .del { top: -1px; right: 0; }
 .tute-kind { color: var(--text-2); font-weight: 500; }
 .status-busy { color: var(--muted); }
@@ -770,3 +773,29 @@ details.dropdown[open] .btn-filter svg { transform: rotate(180deg); }
   .composer { padding: 10px var(--gutter) 14px; }
   .msg-user { max-width: 90%; }
 }
+
+/* ---------- Tutorial viewer ---------- */
+.tute-summary { font-size: 13px; margin: 0 0 12px; }
+.tsections { display: flex; flex-direction: column; gap: 14px; }
+.tsec { background: var(--surface); border: 1px solid var(--border); border-radius: 14px; padding: 14px 18px; display: flex; flex-direction: column; gap: 10px; scroll-margin-top: 16px; }
+.tsec:target { outline: 2px solid var(--accent); }
+.tsec.admin { background: transparent; border-style: dashed; color: var(--muted); }
+.tsec-head { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; }
+.tsec-head h2 { font-size: 16px; margin: 0; }
+.tsec-label { font-family: var(--mono); font-size: 12px; font-weight: 500; padding: 1px 7px; border-radius: 5px; background: var(--surface-2); color: var(--text-2); }
+.tsec-pages { font-size: 12px; margin-left: auto; }
+.tchip { font-size: 12px; font-weight: 600; padding: 1px 8px; border-radius: 5px; background: var(--surface-2); color: var(--text-2); white-space: nowrap; }
+.type-exercise { background: var(--accent-soft); color: var(--accent-strong); }
+.type-worked_example { background: var(--teal-soft); color: var(--teal); }
+.cov-new { background: var(--amber-soft); color: var(--amber-ink); }
+.cov-app { background: var(--ok-soft); color: var(--ok); }
+.ahead { background: #FDE8E8; color: #9B1C1C; }
+@media (prefers-color-scheme: dark) { .ahead { background: #4a2626; color: #ffb4a8; } }
+.concepts { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
+.concept { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 8px; font-size: 14px; }
+.concept-name { font-weight: 600; margin-right: 2px; }
+.concept-summary { flex-basis: 100%; margin: 2px 0 4px; font-size: 13px; color: var(--text-2); }
+.tsec-text summary, .solution summary { cursor: pointer; font-size: 13px; font-weight: 600; color: var(--text-2); }
+.tsec-text .md, .solution .md { margin-top: 8px; }
+.solution { border-top: 1px solid var(--hairline); padding-top: 8px; }
+.no-solution, .answers { margin: 0; font-size: 13px; }

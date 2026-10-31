@@ -47,6 +47,10 @@ is `docs/spec.md`, which lists the phases under "Build plan".
     Exam hints went 19 -> 15; the 4 lost were general emphasis ("super important"), not
     assessment statements, and no window mentioning exams or assessment lacks a real
     hint, so no keyword safeguard was added.
+  - **Queued for the next cleaning prompt change** (don't run just for this; any edit
+    re-cleans every window, about $3.40 for the current five transcripts): an
+    `emphasis` flag for moments the lecturer stresses importance without mentioning
+    exams ("threat modelling is super important", "you should be aware of this attack").
 - **Phase 4, part 1 is done: index, hybrid search and cited Q&A over lectures** (slides,
   lecturer notes, transcripts). Checked on SWEN30006 (154 chunks, $0.0065 to embed).
   Answers cost about $0.005–0.009 and "where" lists about $0.014; repeats cost $0.
@@ -56,6 +60,14 @@ is `docs/spec.md`, which lists the phases under "Build plan".
   - The approved decisions are in the phase 4 plan. Tutorials belong to their board
     week; ignore week numbers inside tutorial files.
   - The database has two SWEN30006 subjects; the older one (05:11) is empty.
+- **Phase 4 part 2 (tutorials) is paused for review** (2026-10-30): parsing, section
+  splitting, labelling, solutions and the viewer work; tutorials are NOT yet in the search
+  index or Ask. Processed so far: SWEN30006 Workshop 4 + Partial Solution 4 (uploaded from
+  `docs/samples`, filed in Week 5), INFO30006 "Tabletop" (wk 2, DOCX) and "low level
+  fundamentals companion" (wk 4). The two INFO ones are on `tute-sections-v1`.
+  Measured cost: ~$0.02 per vision page + ~$0.01 per labelled section; $0.07–0.19 per
+  tutorial so far; the 7 unprocessed INFO30006 sheets estimate ~$1.80 (the 191-page
+  `computing_abstractions_slides.pdf` alone ~$0.77).
 - **Phase 4 UI redesign is done** (matches `docs/design/` mockups): Ask is a chat with
   saved conversations, streamed answers and a source preview panel; Board and Review
   table restyled. Prompts are now `qa-v3` (topic + follow-ups, earlier turns as context)
@@ -296,6 +308,28 @@ is `docs/spec.md`, which lists the phases under "Build plan".
 - **Source panel:** chips carry `data-preview` (`/ask/source/{chunk_id}`): slide image,
   prev/next kept slide, lecturer notes, "What was said" with the cited moment
   highlighted.
+
+## Tutorials (phase 4, part 2)
+
+- **Week rule:** tutorials are filed by the week they're **taught** (Workshop 4 in Week
+  5). The board week is the truth; never assume it matches the lectures a tutorial
+  practises. The classifier takes the week written in a tutorial/solutions file over the
+  filename's; a solutions file with no week takes its tutorial's (shared filename number,
+  `services/uploads._follow_tutorial_week`).
+- **Pipeline** (`app/tutorials/`): `Parser.read_document` (PDF; DOCX via LibreOffice with
+  `exact_spaces`; cached vision for diagram pages, placed at the image's position) or
+  notebook cells -> `blocks.py` -> `sections.py` (split at exercise-heading level, else the
+  largest repeated heading level; sub-parts stay; short non-exercise sections merge
+  forward; >1200 words cut at sub-headings) -> `label.py` (call A per sheet: type +
+  concepts; lecture-only hybrid search per concept; call B per section: covered with
+  evidence, or a summary from the tutorial text only, empty if just used) ->
+  `tutorial_sections` rows (migration 0010) -> `solutions.link_solutions` (exercise number,
+  else heading; within board tutorial groups). Solutions sheets are split, not labelled.
+- **Practised weeks** (`label.practised_weeks`): weeks explaining >= 2 distinct covered
+  concepts and >= half as many as the top week; "Mostly concepts not in your lectures"
+  when under half are covered. "Ahead of lectures" = a concept's earliest lecture week is
+  after the tutorial's board week (computed at render).
+- Viewer: `/files/{id}/tutorial`. Board card links to it and shows the practised weeks.
 
 ## Supabase notes
 

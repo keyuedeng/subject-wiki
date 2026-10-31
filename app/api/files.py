@@ -98,7 +98,9 @@ def parse_file(file_id: uuid.UUID, db: DbSession, queue: QueueDep) -> ParseQueue
     """Queue a slides file for parsing. Unchanged pages reuse cached results (free)."""
     file = file_or_404(db, file_id)
     if not can_queue(file):
-        raise HTTPException(400, "Only slides (PDF, PPTX) and transcripts can be processed")
+        raise HTTPException(
+            400, "Only slides, transcripts, and tutorial or solutions sheets can be processed"
+        )
     if file.status == "parsing":
         raise HTTPException(409, "Already parsing")
     queued = queue.enqueue(db, [file])

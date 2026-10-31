@@ -9,6 +9,9 @@ Signal strength, roughly:
   nothing matched                        0.2 -> "other"
 Week/lecture found only in the content caps confidence at 0.7; slides, transcripts
 and tutorials with no week or lecture at all are capped at 0.55 so they get reviewed.
+For tutorials and solutions the week written in the file ("Workshop 4 (Week 5)") wins
+over one in the filename: they're filed by the week they're taught, which the sheet
+states, while filenames often carry the tutorial number or the lectures' week.
 """
 
 from app.classify import patterns as p
@@ -17,6 +20,7 @@ from app.classify.types import FileType, Guess
 
 WEEKLY_TYPES = {FileType.SLIDES, FileType.TRANSCRIPT, FileType.TUTORIAL}
 CONTENT_WEEK_TYPES = WEEKLY_TYPES | {FileType.SOLUTIONS}
+TAUGHT_WEEK_TYPES = {FileType.TUTORIAL, FileType.SOLUTIONS}
 TRANSCRIPT_HEAD_CHARS = 1500  # roughly the first minute of speech
 
 
@@ -35,6 +39,13 @@ def classify(filename: str, peek: Peek, subject_code: str | None = None) -> Gues
         reasons.append(f"week {week} from filename")
     if lecture is not None:
         reasons.append(f"lecture {lecture} from filename")
+
+    if ftype in TAUGHT_WEEK_TYPES and week is not None and text:
+        stated = p.find_number(p.WEEK_RE, p.normalize(text, subject_code), 52)
+        if stated is not None and stated != week:
+            reasons.append(f"week {stated} written in the file (filename says {week})")
+            week = stated
+            confidence = min(confidence, 0.7)
 
     if (week is None or lecture is None) and ftype in CONTENT_WEEK_TYPES and text:
         head = text[:TRANSCRIPT_HEAD_CHARS] if ftype == FileType.TRANSCRIPT else text
@@ -149,6 +160,9 @@ def _guess_type(
     if ext == "pptx":
         reasons.append("PowerPoint file")
         return FileType.SLIDES, 0.8
+    if ext == "ipynb":
+        reasons.append("Jupyter notebook")
+        return FileType.TUTORIAL, 0.75
 
     if ext in ("pdf", "pptx") and (code := p.LECTURE_RE.search(name)):
         reasons.append(f"lecture code '{code.group(0)}' in filename")

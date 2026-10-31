@@ -27,6 +27,7 @@ from app.parse.document import (
     Deck,
     PageInfo,
     deck_from_pdf,
+    docx_to_pdf,
     pptx_notes,
     pptx_to_pdf,
     render_page,
@@ -141,20 +142,34 @@ class Parser:
     def _load_deck(self, sha: str, ext: str, data: bytes) -> Deck:
         if ext == "pdf":
             return deck_from_pdf(data)
+        if ext == "docx":
+            return deck_from_pdf(self._converted_pdf(sha, data, docx_to_pdf), exact_spaces=True)
         if ext != "pptx":
-            raise ConversionError(f"Only PDF and PPTX slides can be parsed, not .{ext}")
+            raise ConversionError(f"Only PDF, PPTX and DOCX can be parsed, not .{ext}")
         notes, visible = pptx_notes(data)
         return deck_from_pdf(self._converted_pdf(sha, data), notes, expected_pages=visible)
 
-    def _converted_pdf(self, sha: str, pptx: bytes) -> bytes:
-        """LibreOffice output is stored by the PPTX's hash, so it converts only once."""
+    def _converted_pdf(self, sha: str, data: bytes, convert=None) -> bytes:
+        """LibreOffice output is stored by the source file's hash, so it converts once."""
         path = converted_pdf_path(sha)
         try:
             return self.storage.get(path)
         except StorageNotFound:
-            pdf = pptx_to_pdf(pptx)
+            pdf = (convert or pptx_to_pdf)(data)
             self.storage.put(path, pdf, "application/pdf")
             return pdf
+
+    def read_document(
+        self, file_id: uuid.UUID, sha: str, ext: str, data: bytes
+    ) -> tuple[Deck, dict[int, "PageCall"], dict[int, str]]:
+        """A document's pages with vision results for the pages routing sends to vision
+        (cached like slides). Used for tutorial sheets: no build-step dedupe, and page
+        images are stored for the viewer."""
+        deck = self._load_deck(sha, ext, data)
+        vision_pages = [p for p in deck.pages if route_page(p).route == "vision"]
+        pngs = self._render_and_store(deck, sha, {p.page_no for p in vision_pages})
+        calls, errors = self._vision(file_id, deck, vision_pages, {}, pngs)
+        return deck, calls, errors
 
     def _render_and_store(self, deck: Deck, sha: str, keep: set[int]) -> dict[int, bytes]:
         """Upload any missing page images; return the PNGs of the pages in `keep`."""

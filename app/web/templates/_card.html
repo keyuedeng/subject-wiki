@@ -1,8 +1,9 @@
 {#- A file on the week board: clean title, filename, status. Draggable between cells.
     Expects `f`, `subject`, `statuses`. -#}
 {%- set title = names.get(f.id) or (f | file_title(subject)) -%}
-{%- set href = ("/files/" ~ f.id ~ "/transcript") if is_transcript(f) and f.status == "parsed"
-               else (("/files/" ~ f.id ~ "/slides") if can_parse(f) and f.status == "parsed" else none) -%}
+{%- set href = none if f.status != "parsed" else ("/files/" ~ f.id ~ "/transcript" if is_transcript(f)
+               else ("/files/" ~ f.id ~ "/slides" if can_parse(f)
+               else ("/files/" ~ f.id ~ "/tutorial" if is_sheet(f) else none))) -%}
 <div class="chip card {{ 'review' if f.needs_review }}" draggable="true" data-file-id="{{ f.id }}"
      tabindex="0" title="{{ f.filename }}">
   {% if href %}<a class="card-title" href="{{ href }}" draggable="false">{{ title }}</a>

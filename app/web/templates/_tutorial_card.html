@@ -1,11 +1,15 @@
 {#- A tutorial's questions and solutions in one card. Each file can be dragged on its own.
-    Expects `tg` (a TutorialGroup), `subject`. -#}
+    Expects `tg` (a TutorialGroup), `subject`, `statuses`; optional `practised`. -#}
+{%- set main = tg.tutorials[0] if tg.tutorials else tg.solutions[0] -%}
 <div class="tute-card">
-  <span class="card-title">{{ tg.primary | file_title(subject) }}</span>
+  {% if main.status == "parsed" %}<a class="card-title" href="/files/{{ main.id }}/tutorial">{{ main | file_title(subject) }}</a>
+  {% else %}<span class="card-title">{{ main | file_title(subject) }}</span>{% endif %}
+  {% if practised and practised.get(main.id) %}<span class="practises">{{ practised[main.id] }}</span>{% endif %}
   <div class="tute-files">
     {% for f in tg.tutorials %}
     <div class="chip tute-file" draggable="true" data-file-id="{{ f.id }}" tabindex="0" title="{{ f.filename }}">
-      <span><span class="tute-kind">Questions</span> · {{ f.filename }}</span>
+      <span class="tute-name"><span class="tute-kind">Questions</span> · {{ f.filename }}</span>
+      <span class="card-status">{% with status_view = "board" %}{% include "_status.html" %}{% endwith %}</span>
       <button type="button" class="del" aria-label="Delete {{ f.filename }}"
               hx-delete="/files/{{ f.id }}?view=board" hx-target="#view"
               hx-confirm="Delete “{{ f.filename }}”? This removes the stored file.">✕</button>
@@ -13,7 +17,8 @@
     {% endfor %}
     {% for f in tg.solutions %}
     <div class="chip tute-file" draggable="true" data-file-id="{{ f.id }}" tabindex="0" title="{{ f.filename }}">
-      <span><span class="tute-kind">Solutions</span> · {{ f.filename }}</span>
+      <span class="tute-name"><span class="tute-kind">Solutions</span> · {{ f.filename }}</span>
+      <span class="card-status">{% with status_view = "board" %}{% include "_status.html" %}{% endwith %}</span>
       <button type="button" class="del" aria-label="Delete {{ f.filename }}"
               hx-delete="/files/{{ f.id }}?view=board" hx-target="#view"
               hx-confirm="Delete “{{ f.filename }}”? This removes the stored file.">✕</button>

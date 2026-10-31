@@ -22,7 +22,7 @@ from app.classify.rules import classify
 from app.classify.titles import document_title
 from app.classify.types import FileType
 from app.db.models import File, Subject
-from app.services.board import resolve_slot
+from app.services.board import filename_numbers, resolve_slot
 from app.services.files import apply_type
 from app.storage.client import Storage, object_path
 
@@ -37,6 +37,7 @@ EXT_MIME = {
     "vtt": "text/vtt",
     "srt": "application/x-subrip",
     "txt": "text/plain",
+    "ipynb": "application/x-ipynb+json",
 }
 
 
@@ -63,6 +64,30 @@ def rejection_reason(filename: str, mime: str | None, size: int, max_bytes: int)
     if size > max_bytes:
         return f"File is {size / 1_048_576:.0f} MB; the limit is {max_bytes / 1_048_576:.0f} MB."
     return None
+
+
+def _follow_tutorial_week(db: Session, subject: Subject, file: File) -> None:
+    """Solutions are filed in their tutorial's week, which a solutions sheet rarely
+    states: a solutions file with no week of its own takes the week of the one tutorial
+    sharing a filename number ("Partial_Solution_04" -> "Workshop_04"); a new tutorial
+    gives its week to such solutions that nobody has filed yet."""
+    numbers = filename_numbers(file.filename)
+    if not numbers:
+        return
+    if file.type == FileType.SOLUTIONS.value and file.week is None:
+        tutes = [t for t in db.scalars(select(File).where(
+            File.subject_id == subject.id, File.type == FileType.TUTORIAL.value,
+            File.week.is_not(None))) if numbers & filename_numbers(t.filename)]  # fmt: skip
+        if len({t.week for t in tutes}) == 1:
+            file.week = tutes[0].week
+            file.classify_reason += f"; week {file.week} from tutorial {tutes[0].filename}"
+    elif file.type == FileType.TUTORIAL.value and file.week is not None:
+        for sol in db.scalars(select(File).where(
+                File.subject_id == subject.id, File.type == FileType.SOLUTIONS.value,
+                File.week.is_(None), File.reviewed.is_(False))):  # fmt: skip
+            if numbers & filename_numbers(sol.filename):
+                sol.week = file.week
+                sol.classify_reason += f"; week {file.week} from tutorial {file.filename}"
 
 
 def ingest_upload(
@@ -106,6 +131,7 @@ def ingest_upload(
         reviewed=False,
     )
     apply_type(file, guess.type)
+    _follow_tutorial_week(db, subject, file)
     if slot:
         new_type, file.week = resolve_slot(slot, slot_week, guess.type)
         apply_type(file, new_type)

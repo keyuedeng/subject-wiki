@@ -20,7 +20,7 @@ from app.classify import patterns
 from app.classify.titles import display_title
 from app.classify.types import FileType
 from app.config import get_settings
-from app.db.models import File, Slide, Subject, TranscriptSegment
+from app.db.models import File, Slide, Subject, TranscriptSegment, TutorialSection
 from app.jobs.worker import can_process_transcript, can_queue
 from app.parse.pipeline import can_parse
 from app.parse.vision import PROMPT_VERSION
@@ -46,6 +46,9 @@ from app.transcripts.pairing import (
     suggestions_by_subject,
     sync_auto_pairs,
 )
+from app.tutorials.label import mostly_new, practised_weeks
+from app.tutorials.pipeline import can_process_tutorial
+from app.tutorials.solutions import link_solutions
 from app.web import status as st
 
 
@@ -105,6 +108,7 @@ templates.env.globals.update(
         "admin": "Admin",
     },
     is_transcript=can_process_transcript,
+    is_sheet=can_process_tutorial,
     FILE_TYPES=[t.value for t in FileType],
     TYPE_LABELS=st.TYPE_LABELS,
     ACCEPTED_LABEL=", ".join(e.upper() for e in sorted(patterns.ACCEPTED_EXTENSIONS)),
@@ -243,7 +247,9 @@ def parse_file(
 ) -> Response:
     file = file_or_404(db, file_id)
     if not can_queue(file):
-        raise HTTPException(422, "Only slides (PDF, PPTX) and transcripts can be processed")
+        raise HTTPException(
+            422, "Only slides, transcripts, and tutorial or solutions sheets can be processed"
+        )
     queue.enqueue(db, [file])
     db.refresh(file)  # the worker may already have moved it on
     return _after_change(request, db, file, view)
@@ -344,6 +350,53 @@ def slide_viewer(
             "stats": stats,
         },
     )
+
+
+# Tutorials
+
+
+@router.get("/files/{file_id}/tutorial", response_class=HTMLResponse)
+def tutorial_view(request: Request, file_id: uuid.UUID, db: DbSession) -> HTMLResponse:
+    """A tutorial's sections with their labels, the lectures each relies on, and paired
+    solutions; or a solutions sheet's sections and the exercises they answer."""
+    file = file_or_404(db, file_id)
+    if not can_process_tutorial(file):
+        raise HTTPException(404, "Not a tutorial or solutions sheet")
+    subject = file.subject
+    _refresh_pairing(db, subject, request.state.storage)
+    sections = list(db.scalars(select(TutorialSection).where(
+        TutorialSection.file_id == file.id).order_by(TutorialSection.idx)))  # fmt: skip
+    linked_ids = {s.solution_section_id for s in sections if s.solution_section_id}
+    solutions = {s.id: s for s in db.scalars(
+        select(TutorialSection).where(TutorialSection.id.in_(linked_ids)))}  # fmt: skip
+    answered = {}  # solutions sheet: its section id -> the exercise it answers
+    if file.type == FileType.SOLUTIONS:
+        ids = [s.id for s in sections]
+        for ex in db.scalars(select(TutorialSection).where(
+                TutorialSection.solution_section_id.in_(ids))):  # fmt: skip
+            answered[ex.solution_section_id] = ex
+    others = {f.id: f for f in db.scalars(select(File).where(
+        File.id.in_({s.file_id for s in [*solutions.values(), *answered.values()]})))}  # fmt: skip
+    is_tutorial = file.type == FileType.TUTORIAL
+    practises = (
+        st.practises_text(practised_weeks(sections), mostly_new(sections)) if is_tutorial else None
+    )
+    counts = {
+        "sections": len(sections),
+        "exercises": sum(s.is_exercise for s in sections),
+        "new": sum(s.coverage == "new_concept" for s in sections),
+        "with_solution": sum(s.solution_section_id is not None for s in sections),
+        "cost": sum(s.cost_usd or 0 for s in sections),
+    }
+    return templates.TemplateResponse(
+        request,
+        "tutorial.html",
+        {
+            "file": file, "subject": subject, "sections": sections, "solutions": solutions,
+            "answered": answered, "others": others, "practises": practises,
+            "counts": counts,
+        },
+    )  # fmt: skip
 
 
 # Transcripts
@@ -505,6 +558,8 @@ def _refresh_pairing(db: DbSession, subject: Subject, storage) -> None:
     sync_auto_pairs(db, subject.id)
     if storage is not None:
         refresh_suggestions(db, storage, subject.id)
+    link_solutions(db, subject.id)  # a moved file changes which solutions go with what
+    db.commit()
 
 
 def _statuses(db: DbSession, subject: Subject, files: list[File], board) -> dict:
@@ -517,11 +572,27 @@ def _statuses(db: DbSession, subject: Subject, files: list[File], board) -> dict
         t: st.Suggested(s.slides_file_id, titles.get(s.slides_file_id, ""), s.score, s.runner_up)
         for t, s in suggestions_by_subject(db, subject.id).items()
     }
+    sheets = st.sheet_info(db, [f.id for f in files if can_process_tutorial(f)])
     return {
         f.id: st.file_status(f, duration_ms=lengths.get(f.id), paired_decks=names.get(f.id),
-                             tutorial=tutorials.get(f.id), suggestion=suggested.get(f.id))
+                             tutorial=tutorials.get(f.id), suggestion=suggested.get(f.id),
+                             sheet=sheets.get(f.id))
         for f in files
     }  # fmt: skip
+
+
+def _practised(db: DbSession, files: list[File]) -> dict:
+    """Tutorial file id -> "Practises Week 4 lectures", from its sections' evidence."""
+    ids = [f.id for f in files if f.type == FileType.TUTORIAL and f.status == "parsed"]
+    if not ids:
+        return {}
+    by_file: dict = {}
+    for s in db.scalars(select(TutorialSection).where(TutorialSection.file_id.in_(ids))):
+        by_file.setdefault(s.file_id, []).append(s)
+    return {
+        fid: st.practises_text(practised_weeks(secs), mostly_new(secs))
+        for fid, secs in by_file.items()
+    }
 
 
 def _index(
@@ -585,6 +656,7 @@ def _view_context(
         "view": view,
         "statuses": _statuses(db, subject, files, board),
         "names": _names(db, subject, files),
+        "practised": _practised(db, files),
     }
     if view == "table":
         files.sort(

@@ -40,6 +40,8 @@ def peek(data: bytes, ext: str) -> Peek:
                 return _peek_pptx(data)
             case "docx":
                 return _peek_docx(data)
+            case "ipynb":
+                return _peek_ipynb(data)
             case "txt" | "vtt" | "srt":
                 return _peek_text(data)
             case _:
@@ -135,6 +137,22 @@ def _peek_docx(data: bytes) -> Peek:
         text="\n".join(p.text for p in paragraphs)[:MAX_CHARS],
         title_candidates=tuple(headings[:3] + short[:2]),
     )
+
+
+def _peek_ipynb(data: bytes) -> Peek:
+    """Jupyter notebook: markdown and code cells' text; markdown headings are titles."""
+    import json
+
+    cells = json.loads(data.decode("utf-8-sig")).get("cells") or []
+    texts, headings = [], []
+    for cell in cells:
+        source = cell.get("source") or ""
+        source = "".join(source) if isinstance(source, list) else str(source)
+        texts.append(source)
+        if cell.get("cell_type") == "markdown":
+            headings += [ln.lstrip("#").strip() for ln in source.splitlines()
+                         if ln.startswith("#") and ln.lstrip("#").strip()]  # fmt: skip
+    return Peek(text="\n".join(texts)[:MAX_CHARS], title_candidates=tuple(headings[:3]))
 
 
 def _peek_text(data: bytes) -> Peek:

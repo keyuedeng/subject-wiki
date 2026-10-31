@@ -1,6 +1,7 @@
 """Background processing: one file at a time in a worker thread (pages/windows run
-concurrently inside a file). Slides are parsed; transcripts are cleaned and aligned; each
-finished file is then indexed for search (only chunks whose text changed are embedded).
+concurrently inside a file). Slides are parsed; transcripts are cleaned and aligned;
+tutorial and solutions sheets are split into sections and labelled; each finished slides
+or transcript file is then indexed for search (only chunks whose text changed are embedded).
 
 State lives in Postgres (files.status), so nothing is lost if the app restarts: files
 left in "parsing" are queued again, and the request-hash cache makes that free for work
@@ -31,6 +32,7 @@ from app.search.index import Indexer
 from app.storage.client import get_storage
 from app.transcripts.pairing import transcripts_for
 from app.transcripts.pipeline import TRANSCRIPT_EXTS, TranscriptProcessor, TranscriptSettings
+from app.tutorials.pipeline import TutorialProcessor, TutorialSettings, can_process_tutorial
 
 logger = logging.getLogger(__name__)
 
@@ -40,7 +42,7 @@ def can_process_transcript(file: File) -> bool:
 
 
 def can_queue(file: File) -> bool:
-    return can_parse(file) or can_process_transcript(file)
+    return can_parse(file) or can_process_transcript(file) or can_process_tutorial(file)
 
 
 class ParseQueue:
@@ -51,14 +53,18 @@ class ParseQueue:
         executor: Executor | None = None,
         indexer: Indexer | None = None,
         leases: Leases | None = None,
+        tutorials: TutorialProcessor | None = None,
     ):
         self.parser = parser
         self.transcripts = transcripts
+        self.tutorials = tutorials
         self.indexer = indexer
         self.leases = leases
         parser.leases = leases
         if transcripts is not None:
             transcripts.leases = leases
+        if tutorials is not None:
+            tutorials.leases = leases
         self.executor = executor or ThreadPoolExecutor(max_workers=1, thread_name_prefix="parse")
         parser.on_parsed = self._after_parse
         if transcripts is not None:
@@ -68,6 +74,8 @@ class ParseQueue:
     def _job(self, file_type: str):
         if file_type == FileType.TRANSCRIPT.value and self.transcripts is not None:
             return self.transcripts.process
+        if file_type in (FileType.TUTORIAL.value, FileType.SOLUTIONS.value):
+            return self.tutorials.process
         return self.parser.parse
 
     def enqueue(self, db: Session, files: list[File]) -> list[File]:
@@ -76,10 +84,12 @@ class ParseQueue:
             f for f in files
             if can_queue(f) and f.status != FileStatus.PARSING.value
             and (self.transcripts is not None or not can_process_transcript(f))
+            and (self.tutorials is not None or not can_process_tutorial(f))
         ]  # fmt: skip
         if self.leases is not None:  # another process is already on it: leave it be
             queued = [f for f in queued if self.leases.claim(f.id)]
-        queued.sort(key=lambda f: f.type == FileType.TRANSCRIPT.value)  # decks first
+        # Decks first: transcripts align to them, and tutorials search the lectures.
+        queued.sort(key=lambda f: f.type != FileType.SLIDES.value)
         jobs = [(self._job(f.type), f.id) for f in queued]
         for f in queued:
             f.status, f.status_detail = FileStatus.PARSING.value, "Queued"
@@ -188,4 +198,28 @@ def get_queue() -> ParseQueue:
         ),
     )
     indexer = Indexer(session_factory, llm, settings.embedding_model, settings.embedding_dimensions)
-    return ParseQueue(parser, transcripts, indexer=indexer, leases=Leases(session_factory))
+    tutorials = TutorialProcessor(
+        session_factory=session_factory,
+        storage=storage,
+        llm=llm,
+        parser=parser,
+        search=_lecture_search,
+        settings=TutorialSettings(
+            model=settings.tutorial_model,
+            effort=settings.tutorial_effort,
+            concurrency=settings.parse_concurrency,
+        ),
+    )
+    return ParseQueue(parser, transcripts, indexer=indexer, leases=Leases(session_factory),
+                      tutorials=tutorials)  # fmt: skip
+
+
+def _lecture_search(db, subject, query: str):
+    """Lecture material only (slides, lecturer notes, transcripts) for a concept."""
+    from app.search.backend import Filters
+    from app.services.ask import get_ask_service
+
+    found = get_ask_service().search(
+        db, subject, query, Filters(types=("slide", "notes", "transcript")), k=4
+    )
+    return [s.ref for s in found]

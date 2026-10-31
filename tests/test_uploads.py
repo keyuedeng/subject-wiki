@@ -144,3 +144,27 @@ def test_upload_stores_document_title(db, storage, subject):
     page.insert_text((50, 200), "Lecture 5: Decision Trees", fontsize=36)
     f = upload(db, storage, subject, "Week3_L5.pdf", doc.tobytes()).file
     assert f.title == "Decision Trees"
+
+
+def test_solutions_take_their_tutorials_week(db, storage, subject):
+    from tests.slide_fixtures import make_deck
+
+    sheet = make_deck([{"title": "Workshop 4", "lines": ["Pre-Workshop Learning (Week 5)"]}])
+    tute = upload(db, storage, subject, "Workshop_04.pdf", sheet).file
+    assert (tute.type, tute.week) == ("tutorial", 5)
+    sol = upload(db, storage, subject, "Partial_Solution_04.pdf", b"answers").file
+    assert (sol.type, sol.week) == ("solutions", 5)
+    assert "week 5 from tutorial Workshop_04.pdf" in sol.classify_reason
+    # Uploaded the other way round: the tutorial gives its week to the waiting solutions.
+    early = upload(db, storage, subject, "Partial_Solution_06.pdf", b"answers 6").file
+    assert early.week is None
+    upload(db, storage, subject, "Workshop_06.pdf",
+           make_deck([{"title": "Workshop 6", "lines": ["Week 7 module"]}]))  # fmt: skip
+    db.refresh(early)
+    assert early.week == 7
+
+
+def test_ipynb_is_accepted(db, storage, subject):
+    nb = b'{"cells": [{"cell_type": "markdown", "source": ["# Lab 3: Hashing"]}], "nbformat": 4}'
+    f = upload(db, storage, subject, "week3_lab.ipynb", nb, mime="application/json").file
+    assert (f.type, f.ext, f.title) == ("tutorial", "ipynb", "Hashing")  # numbers are stripped

@@ -370,3 +370,72 @@ class ChatMessage(Base):
             f"kind IN ({', '.join(repr(k) for k in MESSAGE_KINDS)})", name="kind_valid"
         ),
     )
+
+
+# Tutorial section ids are derived (subject, file content, position), so re-processing
+# the same file updates rows in place.
+TUTORIAL_SECTION_NAMESPACE = uuid.UUID("3e0d7c1a-5b2f-4f8e-9c64-1a7d2e9b8f30")
+SECTION_TYPES = ("explanation", "worked_example", "exercise", "setup_admin")
+COVERAGE_TYPES = ("application", "new_concept")
+SOLUTION_SOURCES = ("official", "generated", "none")
+
+
+def tutorial_section_id(subject_id: uuid.UUID, sha256: str, idx: int) -> uuid.UUID:
+    return uuid.uuid5(TUTORIAL_SECTION_NAMESPACE, f"{subject_id}:{sha256}:{idx}")
+
+
+class TutorialSection(Base):
+    """One section of a tutorial or solutions sheet, split by the sheet's own structure
+    (app/tutorials/sections.py). Tutorial sections are labelled (app/tutorials/label.py):
+    type, the concepts they use, and whether the lectures cover those concepts.
+
+    `concepts`: [{name, status: covered | not_covered, evidence: [{chunk_id, source_type,
+    label, href, week, title}], earliest_week, summary}]; `summary` is drawn only from the
+    tutorial text, and is empty when the tutorial uses the concept without explaining it.
+    """
+
+    __tablename__ = "tutorial_sections"
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True)
+    file_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("files.id", ondelete="CASCADE"), index=True
+    )
+    idx: Mapped[int] = mapped_column(SmallInteger)
+    number: Mapped[int | None] = mapped_column(SmallInteger)  # exercise number
+    is_exercise: Mapped[bool] = mapped_column(default=False)
+    label: Mapped[str] = mapped_column(Text)  # "Q3", or a short title
+    title: Mapped[str] = mapped_column(Text)
+    text_md: Mapped[str] = mapped_column(Text)
+    words: Mapped[int] = mapped_column(default=0)
+    page_start: Mapped[int | None] = mapped_column(SmallInteger)
+    page_end: Mapped[int | None] = mapped_column(SmallInteger)
+
+    section_type: Mapped[str | None] = mapped_column(String(16))
+    coverage: Mapped[str | None] = mapped_column(String(16))
+    concepts: Mapped[list] = mapped_column(JsonType, default=list)
+    earliest_week: Mapped[int | None] = mapped_column(SmallInteger)  # first lecture week used
+
+    solution_section_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("tutorial_sections.id", ondelete="SET NULL")
+    )
+    solution_source: Mapped[str] = mapped_column(String(16), default="none")
+
+    prompt_version: Mapped[str | None] = mapped_column(String(32))
+    cost_usd: Mapped[float | None] = mapped_column(Float)  # labelling calls for this section
+    cached: Mapped[bool] = mapped_column(default=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+    __table_args__ = (
+        UniqueConstraint("file_id", "idx", name="uq_tutorial_sections_file_idx"),
+        CheckConstraint(
+            f"section_type IN ({', '.join(repr(t) for t in SECTION_TYPES)})",
+            name="section_type_valid",
+        ),
+        CheckConstraint(
+            f"coverage IN ({', '.join(repr(t) for t in COVERAGE_TYPES)})", name="coverage_valid"
+        ),
+        CheckConstraint(
+            f"solution_source IN ({', '.join(repr(t) for t in SOLUTION_SOURCES)})",
+            name="solution_source_valid",
+        ),
+    )

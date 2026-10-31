@@ -97,11 +97,11 @@ def test_parse_all_and_reparse_cost_nothing(parse_client, vision):
     assert [s["route"] for s in slides].count("vision") == 1
 
 
-def test_only_slides_can_be_parsed(parse_client):
+def test_other_files_cant_be_processed(parse_client):
     sid, _ = setup_subject(parse_client)
     up = parse_client.post(
         f"/api/subjects/{sid}/files",
-        files={"file": ("Week 2 Tutorial.pdf", make_deck([text_page(9)]))},
+        files={"file": ("2023 Final Exam.pdf", make_deck([text_page(9)]))},
     )
     fid = up.json()["file"]["id"]
     assert parse_client.post(f"/api/files/{fid}/parse").status_code == 400

@@ -98,11 +98,17 @@ class Deck:
     notes: dict[int, str]  # page_no -> speaker notes (PPTX only)
 
 
-def deck_from_pdf(pdf: bytes, notes: dict[int, str] | None = None,
-                  expected_pages: int | None = None) -> Deck:  # fmt: skip
+def deck_from_pdf(
+    pdf: bytes,
+    notes: dict[int, str] | None = None,
+    expected_pages: int | None = None,
+    exact_spaces: bool = False,
+) -> Deck:
     """Measure a PDF. Speaker notes are matched to pages by position, so they are only
-    attached when the PDF has exactly one page per visible slide."""
-    pages = measure(pdf)
+    attached when the PDF has exactly one page per visible slide. `exact_spaces`: take
+    only the space characters in the PDF, for LibreOffice output of Word files, whose
+    letter-spacing PyMuPDF would otherwise read as spaces ("Atta ck", "Thr eat")."""
+    pages = measure(pdf, exact_spaces)
     if notes and expected_pages is not None and expected_pages != len(pages):
         logger.warning(
             "PPTX has %d visible slides but the PDF has %d pages; speaker notes skipped",
@@ -128,25 +134,36 @@ def find_soffice() -> str | None:
 
 
 def pptx_to_pdf(data: bytes) -> bytes:
+    return office_to_pdf(data, "pptx")
+
+
+def docx_to_pdf(data: bytes) -> bytes:
+    """Word documents (tutorial sheets) render through the same PDF path as slides, so
+    automatic numbering and embedded images come out as they print."""
+    return office_to_pdf(data, "docx")
+
+
+def office_to_pdf(data: bytes, ext: str) -> bytes:
     soffice = find_soffice()
     if soffice is None:
         raise ConversionError(
-            "PPTX needs LibreOffice to convert (brew install --cask libreoffice), "
+            f"{ext.upper()} needs LibreOffice to convert (brew install --cask libreoffice), "
             "or upload the PDF export instead."
         )
     with tempfile.TemporaryDirectory() as tmp:
-        src = Path(tmp) / "deck.pptx"
+        src = Path(tmp) / f"doc.{ext}"
         src.write_bytes(data)
         # A private profile dir avoids clashing with a running LibreOffice instance.
         profile = f"-env:UserInstallation=file://{tmp}/profile"
+        target = PDF_EXPORT if ext == "pptx" else "pdf"
         result = subprocess.run(
-            [soffice, profile, "--headless", "--convert-to", PDF_EXPORT, "--outdir", tmp, str(src)],
+            [soffice, profile, "--headless", "--convert-to", target, "--outdir", tmp, str(src)],
             capture_output=True,
             timeout=300,
         )
-        out = Path(tmp) / "deck.pdf"
+        out = Path(tmp) / "doc.pdf"
         if result.returncode != 0 or not out.exists():
-            raise ConversionError("LibreOffice could not convert the PPTX to PDF")
+            raise ConversionError(f"LibreOffice could not convert the {ext.upper()} to PDF")
         return out.read_bytes()
 
 
@@ -215,12 +232,13 @@ def _is_maths(span: dict) -> bool:
                for ch in span["text"])  # fmt: skip
 
 
-def _raw_page(page: pymupdf.Page) -> _Raw:
+def _raw_page(page: pymupdf.Page, exact_spaces: bool = False) -> _Raw:
     """Lines in reading order: text blocks top-to-bottom then left-to-right (so columns
     stay together), lines in order within each block."""
     lines: list[Line] = []
     math = False
-    blocks = [b for b in page.get_text("dict")["blocks"] if b.get("lines")]
+    flags = pymupdf.TEXTFLAGS_DICT | (pymupdf.TEXT_INHIBIT_SPACES if exact_spaces else 0)
+    blocks = [b for b in page.get_text("dict", flags=flags)["blocks"] if b.get("lines")]
     blocks.sort(key=lambda b: (round(b["bbox"][1] / 10), b["bbox"][0]))
     for block in blocks:
         pending_bullet: str | None = None
@@ -255,9 +273,9 @@ def _raw_page(page: pymupdf.Page) -> _Raw:
     return _Raw(page, lines, images, drawings, math)
 
 
-def measure(pdf: bytes) -> list[PageInfo]:
+def measure(pdf: bytes, exact_spaces: bool = False) -> list[PageInfo]:
     with pymupdf.open(stream=pdf, filetype="pdf") as doc:
-        raws = [_raw_page(page) for page in doc]
+        raws = [_raw_page(page, exact_spaces) for page in doc]
         template_lines, template_images, template_drawings = _template(raws)
         pages = []
         for i, raw in enumerate(raws):
