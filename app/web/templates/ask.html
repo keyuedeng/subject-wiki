@@ -20,7 +20,7 @@
       {% else %}
       <div class="thread-empty">
         <h1>Ask about {{ subject.code or subject.name }}</h1>
-        <p>Answers come only from your uploaded slides, lecturer notes and lecture transcripts, with a
+        <p>Answers come only from your uploaded slides, lecturer notes, lecture transcripts and tutorials, with a
           citation for every claim. Switch to “Where is it taught?” to see every week that covers a topic.</p>
         {% if not stats.sources %}
         <p class="notice">Nothing is indexed yet. Parse slides and process transcripts on the
@@ -69,7 +69,7 @@
           </button>
         </div>
       </div>
-      <p class="composer-note">Answers use only your uploaded slides, notes and transcripts. Enter to send, Shift+Enter for a new line.</p>
+      <p class="composer-note">Answers use only your uploaded lectures and tutorials. Enter to send, Shift+Enter for a new line.</p>
     </form>
   </main>
 

@@ -77,6 +77,8 @@ def where_payload(w: WhereAnswer) -> dict:
         "summary": w.summary,
         "follow_ups": w.follow_ups,
         "missing_note": w.missing_note,
+        "introduced_in_tutorial": w.introduced_in_tutorial,
+        "tutorial_summary": w.tutorial_summary,
         "model_called": w.model_called,
         "candidates": len(w.sources),
         "weeks": [
@@ -113,6 +115,8 @@ def where_from(msg: ChatMessage, question: str) -> WhereAnswer:
         question, p.get("topic", ""), weeks, [], p.get("missing_note"), msg.cost_usd,
         msg.cached, p.get("model_called", True), p.get("summary", ""), p.get("follow_ups", []),
         candidates=p.get("candidates", 0),
+        introduced_in_tutorial=p.get("introduced_in_tutorial", False),
+        tutorial_summary=p.get("tutorial_summary", ""),
     )  # fmt: skip
 
 

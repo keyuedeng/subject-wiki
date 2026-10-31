@@ -102,3 +102,63 @@ game" → `MonopolyGame`). Luna was ~16× cheaper ($0.0037 against ~$0.06 for th
 windows). Kept **sol**: about $0.27 per 55-minute lecture. The side-by-side page is
 `docs/samples/SWEN30006_2026_SM2 M-transcript (1)-clean-comparison.html`
 (`scripts.compare_clean`).
+
+
+## Retrieval: keyword vs embedding vs hybrid (phase 4)
+
+**Measured on:** 40 generated questions (INFO30006, SWEN30006), 2026-10-31. Each question was written by the model from one randomly chosen kept slide or tutorial section (`scripts.qa_generate`, `docs/samples/qa-eval.csv`); the answer key is that source. Search: BM25 over Postgres full-text term counts, pgvector cosine (`text-embedding-3-large`, 1536 dims), and the two fused by RRF (k=60, 50 from each).
+
+**Strict: the source itself** (40 questions)
+
+| | Recall@1 | Recall@5 | Recall@10 | MRR |
+|---|---|---|---|---|
+| keyword | **67.5%** | 85.0% | 90.0% | 0.759 |
+| embedding | 55.0% | **92.5%** | **95.0%** | 0.706 |
+| hybrid | 65.0% | **92.5%** | **95.0%** | 0.753 |
+
+**Relaxed: or another chunk about the same slide** (40 questions)
+
+| | Recall@1 | Recall@5 | Recall@10 | MRR |
+|---|---|---|---|---|
+| keyword | **75.0%** | 90.0% | 92.5% | 0.809 |
+| embedding | 67.5% | **95.0%** | **97.5%** | 0.783 |
+| hybrid | 72.5% | 92.5% | 95.0% | 0.811 |
+
+**Strict, slide questions** (28 questions)
+
+| | Recall@1 | Recall@5 | Recall@10 | MRR |
+|---|---|---|---|---|
+| keyword | **60.7%** | 78.6% | 85.7% | 0.701 |
+| embedding | 53.6% | **92.9%** | **92.9%** | 0.699 |
+| hybrid | 57.1% | 89.3% | **92.9%** | 0.694 |
+
+**Strict, tutorial questions** (12 questions)
+
+| | Recall@1 | Recall@5 | Recall@10 | MRR |
+|---|---|---|---|---|
+| keyword | **83.3%** | **100.0%** | **100.0%** | 0.896 |
+| embedding | 58.3% | 91.7% | **100.0%** | 0.722 |
+| hybrid | **83.3%** | **100.0%** | **100.0%** | 0.889 |
+
+Reproduce with `uv run python -m scripts.qa_eval` (cached embeddings, no API cost).
+
+**Reading the results:**
+- Hybrid is never the worst method and is best or tied at recall@5 and @10 (strict
+  92.5% / 95.0%), but it does **not** beat both single methods outright: keyword search
+  is one question ahead at recall@1 (67.5% vs 65.0%) and level on MRR (0.759 vs 0.753).
+  With 40 questions, one question is 2.5 points, so the methods are within noise at the
+  top rank; keyword's weakness shows lower down (recall@5 85.0%).
+- Keyword search does best on tutorial questions (12 of 40: 100% recall@5) because
+  generated questions about a tutorial reuse its specific terms (Hashcat, STRIDE).
+  Embeddings do best on slide questions (92.9% recall@5), where questions paraphrase.
+  Hybrid keeps most of each: 100% on tutorials, 89.3% on slides.
+- Fusion settings don't matter here (`--sweep`): RRF k from 10 to 100 and 20 or 50
+  results per list all give 65.0% / 92.5% / 95.0% hybrid recall, MRR 0.751–0.759. The
+  defaults (k=60, 50 per list) are kept.
+- Hybrid misses outside the top 5: three INFO30006 slides with broad questions ("What
+  factors make computer systems difficult to keep secure?"), where many slides and
+  transcript moments say similar things.
+- Caveats: the questions are model-written from one source each, so they lean towards
+  that source's wording, which favours keyword search; the answer key accepts only that
+  source (relaxed adds the same slide's notes and lecture moments). A hand-written set
+  would test paraphrase harder.

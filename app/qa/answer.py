@@ -14,7 +14,7 @@ from pydantic import BaseModel, ConfigDict, Field, create_model
 
 from app.qa.labels import SourceRef
 
-QA_PROMPT_VERSION = "qa-v3"
+QA_PROMPT_VERSION = "qa-v4"
 MAX_OUTPUT_TOKENS = 4000
 SOURCE_CHARS = 1800  # per source sent to the model
 HISTORY_TURNS = 3  # earlier question/answer pairs sent as context for a follow-up
@@ -22,8 +22,10 @@ HISTORY_ANSWER_CHARS = 600
 
 QA_PROMPT = """\
 You answer a student's question about one university subject, using only the numbered \
-sources you are given: slides, the lecturer's speaker notes and lecture transcript \
-excerpts from this subject.
+sources you are given: slides, the lecturer's speaker notes, lecture transcript excerpts \
+and tutorial sheet sections (with the official solution when one was uploaded) from this \
+subject. Tutorial sections are course material like the lectures: use and cite them the \
+same way.
 
 Rules:
 - Use only what the sources say. Never add facts, definitions, examples or steps from \

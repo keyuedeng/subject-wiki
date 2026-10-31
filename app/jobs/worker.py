@@ -65,6 +65,7 @@ class ParseQueue:
             transcripts.leases = leases
         if tutorials is not None:
             tutorials.leases = leases
+            tutorials.on_processed = self._index_tutorials
         self.executor = executor or ThreadPoolExecutor(max_workers=1, thread_name_prefix="parse")
         parser.on_parsed = self._after_parse
         if transcripts is not None:
@@ -139,6 +140,25 @@ class ParseQueue:
             if file is not None:
                 file.status_detail = " · ".join(p for p in (file.status_detail, note) if p)
                 db.commit()
+
+    def _index_tutorials(self, file_id: uuid.UUID) -> None:
+        """A tutorial's chunks include its linked solutions, so processing either kind of
+        sheet re-indexes all the subject's tutorials (unchanged chunks cost nothing)."""
+        if self.indexer is None:
+            return
+        with self.parser.session_factory() as db:
+            subject_id = db.scalar(select(File.subject_id).where(File.id == file_id))
+            ids = list(db.scalars(select(File.id).where(
+                File.subject_id == subject_id, File.type == FileType.TUTORIAL.value,
+                File.status == FileStatus.PARSED.value)))  # fmt: skip
+        if file_id in ids:
+            self._index(file_id)
+        for other in ids:
+            if other != file_id:
+                try:
+                    self.indexer.index_file(other)
+                except Exception:
+                    logger.exception("indexing tutorial %s failed", other)
 
     def _requeue_paired_transcripts(self, slides_id: uuid.UUID) -> None:
         if self.transcripts is None:

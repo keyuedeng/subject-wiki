@@ -44,7 +44,7 @@
 <div class="tsections">
   {% for s in sections %}
   {% set admin = s.section_type == "setup_admin" %}
-  <section class="tsec {{ 'admin' if admin }}" id="{{ s.label | lower | replace(' ', '-') }}">
+  <section class="tsec {{ 'admin' if admin }}" id="sec-{{ s.idx }}">
     <header class="tsec-head">
       <span class="tsec-label">{{ s.label }}</span>
       <h2>{{ s.title }}</h2>
@@ -93,7 +93,7 @@
     {% endif %}
     {% if file.type == "solutions" and answered.get(s.id) %}
       {% set ex = answered[s.id] %}
-      <p class="answers">Answers <a href="/files/{{ ex.file_id }}/tutorial#{{ ex.label | lower | replace(' ', '-') }}">{{ ex.label }}</a> of {{ others[ex.file_id].filename }}</p>
+      <p class="answers">Answers <a href="/files/{{ ex.file_id }}/tutorial#sec-{{ ex.idx }}">{{ ex.label }}</a> of {{ others[ex.file_id].filename }}</p>
     {% endif %}
   </section>
   {% endfor %}

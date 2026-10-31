@@ -7,7 +7,41 @@
   </button>
 </div>
 
-{% if gone %}
+{% if section %}
+<div class="panel-title-block">
+  <div class="panel-where">{{ where }}</div>
+  <div class="panel-title">{{ section.label }}{% if section.title != section.label %} · {{ section.title }}{% endif %}</div>
+</div>
+<div class="panel-chips">
+  {% if section.section_type %}<span class="tchip type-{{ section.section_type }}">{{ section.section_type | replace("_", " ") | capitalize }}</span>{% endif %}
+  {% if section.coverage == "new_concept" %}<span class="tchip cov-new">New concept</span>
+  {% elif section.coverage == "application" %}<span class="tchip cov-app">Applies lecture concepts</span>{% endif %}
+</div>
+{% if section.concepts %}
+<div class="panel-section">
+  <div class="panel-label">Relies on</div>
+  <ul class="concepts">
+    {% for c in section.concepts %}
+    <li class="concept">
+      <span class="concept-name">{{ c.name }}</span>
+      {% if c.status == "covered" %}{% for e in c.evidence[:2] %}<a class="cite cite-{{ e.source_type }}" href="{{ e.href }}">{{ ICONS.get(e.source_type, "") }}{{ e.label }}</a>{% endfor %}
+      {% else %}<span class="tchip cov-new">Introduced in tutorial</span>{% endif %}
+    </li>
+    {% endfor %}
+  </ul>
+</div>
+{% endif %}
+<div class="panel-section">
+  <div class="panel-label">Text</div>
+  <div class="md panel-md">{{ section.text_md | truncate(1500) | markdown | safe }}</div>
+  {% if solution %}
+  <details class="solution"><summary>Show solution <span class="muted">· {{ section.solution_source }}</span></summary>
+    <div class="md panel-md">{{ solution.text_md | truncate(1500) | markdown | safe }}</div></details>
+  {% endif %}
+  <a class="panel-link" href="/files/{{ file.id }}/tutorial#sec-{{ section.idx }}">Open in tutorial viewer</a>
+</div>
+
+{% elif gone %}
 <p class="panel-empty">This source is no longer in the index. Its file may have been re-parsed or deleted.</p>
 
 {% elif slide %}

@@ -9,7 +9,7 @@ from typing import Literal
 from sqlalchemy.orm import Session
 
 from app.search.backend import NO_FILTERS, Filters, SearchBackend
-from app.search.rank import bm25, rrf
+from app.search.rank import RRF_K, bm25, rrf
 
 DEPTH = 50  # results taken from each list before fusing
 Mode = Literal["hybrid", "keyword", "embedding"]
@@ -37,6 +37,7 @@ class Searcher:
     backend: SearchBackend
     embed: Callable[[str], list[float]]  # cached query embedding
     depth: int = DEPTH
+    rrf_k: int = RRF_K
 
     def search(
         self,
@@ -65,7 +66,7 @@ class Searcher:
         elif mode == "embedding":
             ordered = nearest
         else:
-            ordered = rrf([[c for c, _ in keyword], [c for c, _ in nearest]])
+            ordered = rrf([[c for c, _ in keyword], [c for c, _ in nearest]], self.rrf_k)
         hits = [
             Hit(cid, i, score, kw_rank.get(cid), emb_rank.get(cid), sim.get(cid))
             for i, (cid, score) in enumerate(ordered[:k], 1)

@@ -38,6 +38,7 @@ from app.search.backend import NO_FILTERS, Filters, PgBackend, SearchBackend
 from app.search.search import Hit, Mode, Searcher, SearchResult, fuse
 from app.services.board import build_board, weeks_phrase
 from app.transcripts.pairing import pairs_by_subject
+from app.tutorials.names import sheet_names
 
 AskMode = Literal["auto", "answer", "where"]
 OnEvent = Callable[[str, object], None]
@@ -105,6 +106,8 @@ class WhereAnswer:
     summary: str = ""
     follow_ups: list[str] = field(default_factory=list)
     candidates: int = 0  # sources judged (kept when a stored answer drops them)
+    introduced_in_tutorial: bool = False  # found only in tutorial sheets
+    tutorial_summary: str = ""  # what the tutorial says it is, if it explains it
     kind: str = "where"
 
     def __post_init__(self) -> None:
@@ -264,7 +267,8 @@ class AskService:
             question, topic, weeks, sources, missing_note(db, subject, topic, bool(weeks)),
             cost, call.cached,
             summary=(call.response.get("summary") or "").strip() if weeks else "",
-            follow_ups=follow_ups[:2],
+            follow_ups=follow_ups[:2], introduced_in_tutorial=wq.introduced_in_tutorial(weeks),
+            tutorial_summary=wq.tutorial_summary(weeks, topic),
         )  # fmt: skip
 
 
@@ -275,6 +279,11 @@ def load_refs(db: Session, subject: Subject, chunk_ids: list[uuid.UUID]) -> dict
     rows = db.execute(
         select(Chunk, File).join(File, File.id == Chunk.file_id).where(Chunk.id.in_(chunk_ids))
     ).all()
+    sheets = sheet_names(
+        list(db.scalars(select(File).where(
+            File.subject_id == subject.id, File.type == FileType.TUTORIAL.value))),
+        subject.code,
+    )  # fmt: skip
     decks_per_week: dict[int, int] = {}
     for week in db.scalars(
         select(File.week).where(
@@ -291,7 +300,7 @@ def load_refs(db: Session, subject: Subject, chunk_ids: list[uuid.UUID]) -> dict
         out[chunk.id] = SourceRef(
             chunk.id, chunk.source_type, file.id, title, file.week, file.lecture,
             chunk.position, chunk.title, chunk.body, chunk.meta or {},
-            decks_per_week.get(file.week or -1, 0) > 1,
+            decks_per_week.get(file.week or -1, 0) > 1, sheets.get(file.id) or "",
         )  # fmt: skip
     return out
 

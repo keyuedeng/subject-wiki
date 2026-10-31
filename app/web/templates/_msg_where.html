@@ -12,6 +12,13 @@
   <div class="msg-meta" title="{{ 'Cached: $0' if r.cached else ('This answer: $%.4f' | format(r.cost_usd)) }}">
     <span class="sw-badge" aria-hidden="true">SW</span>Coverage across your uploaded material
   </div>
+  {% if r.found and r.introduced_in_tutorial %}
+  <div class="where-introduced">
+    <span class="tchip cov-new">Introduced in tutorial</span>
+    <p>{{ r.topic }} appears only in tutorial sheets, not in the lectures you've uploaded.
+      {% if r.tutorial_summary %}The tutorial describes it as: {{ r.tutorial_summary }}{% endif %}</p>
+  </div>
+  {% endif %}
   {% if r.found %}
   <p class="where-summary">
     {%- if r.summary %}{{ r.summary }}

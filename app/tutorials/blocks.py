@@ -35,6 +35,12 @@ EXERCISE_RE = re.compile(
 LEADING_NUMBER_RE = re.compile(r"^(\d{1,2})(?:[.)]|\s)\s*\S")
 LIST_START_RE = re.compile(r"^\s*(?:[•●▪■◦○‣∙·\-–—*]|\d{1,2}[.)]|\(?[a-z]\)|\(?[ivx]+\))\s+")
 SENTENCE_END = (".", ",", ";")
+# Private-use glyphs: Word's Symbol-font bullets ("\uf0b7") come through as these.
+PRIVATE_USE_RE = re.compile("[\ue000-\uf8ff]")
+
+
+def _clean(text: str) -> str:
+    return " ".join(PRIVATE_USE_RE.sub(" ", text).split())
 
 
 @dataclass
@@ -108,8 +114,11 @@ def pdf_blocks(deck: Deck, figures: dict[int, list[str]]) -> list[Block]:
             if pending and ln.y0 >= figure_y[n]:
                 blocks += [Block("figure", f, n) for f in pending]
                 pending = []
-            text = ln.text.strip()
+            text = _clean(ln.text)
+            if not text:
+                continue
             if _is_heading(ln, body):
+                text = text.lstrip(":;,.-–— ").strip() or text
                 last = blocks[-1] if blocks else None
                 same = (
                     last is not None and last.kind == "heading" and last.page == n and prev

@@ -60,14 +60,14 @@ is `docs/spec.md`, which lists the phases under "Build plan".
   - The approved decisions are in the phase 4 plan. Tutorials belong to their board
     week; ignore week numbers inside tutorial files.
   - The database has two SWEN30006 subjects; the older one (05:11) is empty.
-- **Phase 4 part 2 (tutorials) is paused for review** (2026-10-30): parsing, section
-  splitting, labelling, solutions and the viewer work; tutorials are NOT yet in the search
-  index or Ask. Processed so far: SWEN30006 Workshop 4 + Partial Solution 4 (uploaded from
-  `docs/samples`, filed in Week 5), INFO30006 "Tabletop" (wk 2, DOCX) and "low level
-  fundamentals companion" (wk 4). The two INFO ones are on `tute-sections-v1`.
-  Measured cost: ~$0.02 per vision page + ~$0.01 per labelled section; $0.07–0.19 per
-  tutorial so far; the 7 unprocessed INFO30006 sheets estimate ~$1.80 (the 191-page
-  `computing_abstractions_slides.pdf` alone ~$0.77).
+- **Phase 4 part 2 (tutorials) is done** (2026-10-31): tutorials are parsed, split,
+  labelled and in search and Ask. All INFO30006 sheets are processed except
+  `computing_abstractions_slides.pdf` (191 pages, ~$0.77; left out on purpose), plus
+  SWEN30006 Workshop 4 and its partial solution (Week 5). Cost so far: about $0.02 per
+  vision page + $0.01 per labelled section; $0.07–0.19 per tutorial.
+- **Retrieval eval** (`docs/eval.md`): 40 generated questions, hybrid recall@5 92.5%
+  (embedding 92.5%, keyword 85.0%); keyword is one question ahead at recall@1. Hybrid
+  doesn't beat both outright; RRF settings make no difference.
 - **Phase 4 UI redesign is done** (matches `docs/design/` mockups): Ask is a chat with
   saved conversations, streamed answers and a source preview panel; Board and Review
   table restyled. Prompts are now `qa-v3` (topic + follow-ups, earlier turns as context)
@@ -90,6 +90,10 @@ is `docs/spec.md`, which lists the phases under "Build plan".
   optionally a sweep over penalty settings (cached embeddings, no API cost)
 - `uv run python -m scripts.reindex <subject>`: build or refresh a subject's search index
   (code, name or id; unchanged chunks cost nothing)
+- `uv run python -m scripts.qa_generate SWEN30006 INFO30006 [--n 40]`: write the retrieval
+  eval set (`docs/samples/qa-eval.csv`; one cached call per question, ~$0.002 each)
+- `uv run python -m scripts.qa_eval [--append] [--sweep]`: recall@1/5/10 and MRR for
+  keyword, embedding and hybrid search (cached embeddings, free)
 - `uv run python -m scripts.compare_clean <transcript> --model gpt-6-luna --n 15`: compare
   two cleaning models side by side in HTML
 
@@ -282,12 +286,12 @@ is `docs/spec.md`, which lists the phases under "Build plan".
   returns, because `ts_rank` has no IDF. That is fused with pgvector nearest neighbours
   by RRF (k=60, 50 from each list). `PgBackend` holds all the SQL; tests use
   `tests/search_fixtures.MemoryBackend`, which has the same interface.
-- **Answers** (`app/qa/answer.py`, `qa-v2`): the top 8 chunks are sent as handles
+- **Answers** (`app/qa/answer.py`, `qa-v4`: tutorial sheets are sources too): the top 8 chunks are sent as handles
   S1..S8. `cited` is an enum of those handles, so the list can't name a source that
   wasn't sent, and inline markers are validated by `check()`. If the best similarity is
   under 0.2, the app answers "not covered" without a call. In-domain off-topic questions
   still score about 0.4, so the model's `not_covered` is the real check.
-- **"Where" questions** (`app/qa/where.py`, `where-v1`): detected by regex, or forced
+- **"Where" questions** (`app/qa/where.py`, `where-v3`): detected by regex, or forced
   with mode=where. The top 40 fused results plus phrase matches are judged main or
   mentioned in one call. Results are grouped by week, and neighbouring slides and
   moments are collapsed.
@@ -329,7 +333,17 @@ is `docs/spec.md`, which lists the phases under "Build plan".
   concepts and >= half as many as the top week; "Mostly concepts not in your lectures"
   when under half are covered. "Ahead of lectures" = a concept's earliest lecture week is
   after the tutorial's board week (computed at render).
-- Viewer: `/files/{id}/tutorial`. Board card links to it and shows the practised weeks.
+- Viewer: `/files/{id}/tutorial` (anchors `#sec-{idx}`). Board card links to it and
+  shows the practised weeks.
+- **In search and Ask:** one `tutorial` chunk per section except setup_admin, with the
+  linked official solution's text appended; solutions sheets have no chunks of their
+  own. Processing a tutorial or solutions sheet re-indexes the subject's tutorials. No
+  boost or penalty: tutorials and lectures rank by the same hybrid search. Cited as
+  `Workshop 4 · Q3` (`tutorials/names.py`: the sheet's own number, else "Week N
+  tutorial", else its title when names collide). A where-answer whose sources are all
+  tutorials is marked "Introduced in tutorial", with the tutorial's own summary.
+- Don't edit `app/` while a script is processing files: the worker imports the Ask
+  service lazily, so a mid-run edit mixes old and new code (this failed 5 sheets once).
 
 ## Supabase notes
 

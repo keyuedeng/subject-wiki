@@ -799,3 +799,8 @@ details.dropdown[open] .btn-filter svg { transform: rotate(180deg); }
 .tsec-text .md, .solution .md { margin-top: 8px; }
 .solution { border-top: 1px solid var(--hairline); padding-top: 8px; }
 .no-solution, .answers { margin: 0; font-size: 13px; }
+.panel-chips { display: flex; flex-wrap: wrap; gap: 6px; }
+.panel-md { font-size: 14px; max-height: 360px; overflow-y: auto; }
+.where-introduced { display: flex; flex-direction: column; gap: 6px; padding: 12px 14px; border-radius: 12px; background: var(--amber-soft); }
+.where-introduced p { margin: 0; font-size: 14px; color: var(--amber-ink); }
+.span-tutorial { color: var(--text-2); }

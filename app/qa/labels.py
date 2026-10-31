@@ -1,7 +1,8 @@
 """Citable sources: a chunk plus its file, with the label a student sees and the link that
 opens it. Pure (built from rows by app/services/ask.py).
 
-Labels: "Week 4 · slide 14", "Week 4 lecturer notes · slide 3", "Week 4 lecture · 23:40".
+Labels: "Week 4 · slide 14", "Week 4 lecturer notes · slide 3", "Week 4 lecture · 23:40",
+"Workshop 4 · Q3" (the sheet's short name, app/tutorials/names.py, and the section).
 When a week has more than one deck, the lecture number is added ("Week 4 L5 · slide 14").
 """
 
@@ -38,6 +39,7 @@ class SourceRef:
     body: str
     meta: dict
     multi_lecture_week: bool = False  # the week has more than one deck
+    sheet: str = ""  # tutorials: the sheet's short name ("Workshop 4")
 
     @property
     def kind(self) -> str:
@@ -68,6 +70,8 @@ class SourceRef:
             start = self.meta.get("start_ms")
             moment = clock(start) if start is not None else f"part {self.position + 1}"
             return f"{where} · {moment}"
+        if self.source_type == "tutorial":
+            return f"{self.sheet or self.file_title} · {self.meta.get('label') or self.title}"
         return f"{self._week()} · {self.title}"
 
     @property
@@ -77,6 +81,8 @@ class SourceRef:
             return f"/slides/{self.meta['slide_id']}{anchor}"
         if self.source_type == "transcript":
             return f"/files/{self.file_id}/transcript#seg-{self.meta.get('idx', self.position)}"
+        if self.source_type == "tutorial":
+            return f"/files/{self.file_id}/tutorial#sec-{self.meta.get('idx', self.position)}"
         return f"/files/{self.file_id}"
 
     @property
@@ -99,15 +105,22 @@ class SourceRef:
             head = f"Lecture transcript{at} ({', '.join(where)})"
             if self.title:
                 head += f", while the slide '{self.title}' was shown"
+        elif self.source_type == "tutorial":
+            where = f", filed in Week {self.week}" if self.week is not None else ""
+            name = self.sheet or self.file_title
+            label = self.meta.get("label") or ""
+            head = f'Tutorial sheet "{name}"{where}, section {label}'
         else:
             head = f'{self.kind}: "{self.file_title}"'
-        if self.source_type != "transcript" and self.title:
+        if self.source_type != "transcript" and self.title and self.title != self.meta.get("label"):
             head += f" — {self.title}"
         notes = []
         if "exam_hint" in self.flags:
             notes.append("the lecturer said something here is likely to be examined")
         if "worked_example" in self.flags:
             notes.append("worked example")
+        if self.source_type == "tutorial" and self.meta.get("has_solution"):
+            notes.append("includes the official solution")
         return head + (f" [{'; '.join(notes)}]" if notes else "")
 
 
@@ -143,4 +156,6 @@ def span_short(first: SourceRef, last: SourceRef) -> str:
         if same:
             return clock(start)
         return f"{clock(start)}–{clock(end)}" if end is not None else clock(start)
+    if first.source_type == "tutorial":
+        return first.label
     return first.title or first.kind

@@ -5,6 +5,8 @@
 - notes: a slide's speaker notes as their own chunk (cited as "lecturer notes")
 - transcript: each cleaned segment, titled with the slide it was aligned to; segments the
   cleaning pass flagged as admin are skipped
+- tutorial: each labelled tutorial section except setup/admin ones, with its official
+  solution's text when one is linked
 
 `embed_text` adds context (deck and slide titles) that helps embeddings but would make
 keyword matches noisy, so keyword search sees only `title` and `body`.
@@ -13,7 +15,7 @@ keyword matches noisy, so keyword search sees only `title` and `body`.
 import hashlib
 from dataclasses import dataclass, field
 
-from app.db.models import Slide, TranscriptSegment
+from app.db.models import Slide, TranscriptSegment, TutorialSection
 
 EMBED_CHARS = 6000  # cap per chunk for embedding
 MIN_NOTES_CHARS = 20
@@ -99,5 +101,37 @@ def transcript_chunks(
         out.append(ChunkSpec(
             "transcript", f"transcript:{transcript_sha}:{seg.idx}", seg.idx, title, text,
             (context + text)[:EMBED_CHARS], meta,
+        ))  # fmt: skip
+    return out
+
+
+def tutorial_chunks(
+    sections: list[TutorialSection], solutions: dict, sheet_title: str
+) -> list[ChunkSpec]:
+    """`solutions`: solution section id -> its TutorialSection."""
+    out = []
+    for s in sorted(sections, key=lambda s: s.idx):
+        if s.section_type == "setup_admin" or not s.text_md.strip():
+            continue
+        body = s.text_md.strip()
+        sol = solutions.get(s.solution_section_id) if s.solution_section_id else None
+        if sol is not None:
+            body += f"\n\nSolution ({s.solution_source}):\n{sol.text_md.strip()}"
+        concepts = s.concepts or []
+        meta = {
+            "idx": s.idx,
+            "section_id": str(s.id),
+            "label": s.label,
+            "number": s.number,
+            "section_type": s.section_type,
+            "coverage": s.coverage,
+            "concepts": [c["name"] for c in concepts],
+            "new_concepts": [{"name": c["name"], "summary": c.get("summary") or ""}
+                             for c in concepts if c.get("status") != "covered"],
+            "has_solution": sol is not None,
+        }  # fmt: skip
+        out.append(ChunkSpec(
+            "tutorial", f"tutorial:{s.id}", s.idx, s.title, body,
+            f"Tutorial {sheet_title} · {s.title}\n{body}"[:EMBED_CHARS], meta,
         ))  # fmt: skip
     return out

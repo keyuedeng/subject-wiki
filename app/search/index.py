@@ -17,13 +17,13 @@ from sqlalchemy.orm import Session
 
 from app.classify.titles import display_title
 from app.classify.types import FileType
-from app.db.models import Chunk, File, Slide, TranscriptSegment, chunk_id
+from app.db.models import Chunk, File, Slide, TranscriptSegment, TutorialSection, chunk_id
 from app.llm.client import LlmClient
-from app.search.chunks import ChunkSpec, slide_chunks, transcript_chunks
+from app.search.chunks import ChunkSpec, slide_chunks, transcript_chunks, tutorial_chunks
 
 logger = logging.getLogger(__name__)
 
-INDEXED_TYPES = (FileType.SLIDES.value, FileType.TRANSCRIPT.value)
+INDEXED_TYPES = (FileType.SLIDES.value, FileType.TRANSCRIPT.value, FileType.TUTORIAL.value)
 
 
 @dataclass(frozen=True)
@@ -105,4 +105,18 @@ def chunks_for_file(db: Session, file: File) -> list[ChunkSpec]:
         slide_ids = {s.slide_id for s in segments if s.slide_id}
         slides = {s.id: s for s in db.scalars(select(Slide).where(Slide.id.in_(slide_ids)))}
         return transcript_chunks(segments, file.sha256, slides)
+    if file.type == FileType.TUTORIAL.value:
+        sections = list(
+            db.scalars(select(TutorialSection).where(TutorialSection.file_id == file.id))
+        )
+        linked = {s.solution_section_id for s in sections if s.solution_section_id}
+        solutions = {
+            s.id: s
+            for s in db.scalars(select(TutorialSection).where(TutorialSection.id.in_(linked)))
+        }
+        sheet = display_title(
+            file.title, file.filename, FileType(file.type), file.week, file.lecture,
+            file.subject.code,
+        )  # fmt: skip
+        return tutorial_chunks(sections, solutions, sheet)
     return []

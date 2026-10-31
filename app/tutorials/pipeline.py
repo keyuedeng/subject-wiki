@@ -65,6 +65,8 @@ class TutorialProcessor:
     search: LectureSearch
     settings: TutorialSettings
     leases: Leases | None = None
+    # Called after a successful run (the queue indexes the subject's tutorials).
+    on_processed: Callable[[uuid.UUID], None] | None = None
 
     def process(self, file_id: uuid.UUID) -> None:
         """Run and record the outcome on the file; never raises."""
@@ -81,6 +83,8 @@ class TutorialProcessor:
                 self._set_status(file_id, FileStatus.FAILED, message[:500])
             else:
                 self._set_status(file_id, FileStatus.PARSED, summary)
+                if self.on_processed is not None:
+                    self.on_processed(file_id)
 
     def _process(self, file_id: uuid.UUID) -> str:
         with self.session_factory() as db:

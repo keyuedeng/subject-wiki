@@ -353,3 +353,10 @@ def test_a_later_deck_showing_two_diagrams_isnt_a_practised_week():
     assert practised_weeks(sheet) == [4]
     two_decks = [{"concepts": [c("A", 4), c("B", 4), c("C", 6), c("D", 6), c("E", 6)]}]
     assert practised_weeks(two_decks) == [4, 6]
+
+
+def test_symbol_font_bullets_dont_reach_headings():
+    from app.tutorials.blocks import _clean
+
+    bullet = "\uf0b7"  # Word's Symbol-font bullet, a private-use character
+    assert _clean(f"{bullet}  Why Does This Matter?") == "Why Does This Matter?"

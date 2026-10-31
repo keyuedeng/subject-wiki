@@ -14,13 +14,14 @@ from pydantic import BaseModel, ConfigDict, Field, create_model
 
 from app.qa.labels import SourceRef, span_label, span_short
 
-WHERE_PROMPT_VERSION = "where-v2"
+WHERE_PROMPT_VERSION = "where-v3"
 MAX_OUTPUT_TOKENS = 4000
 EXCERPT_WORDS = 80
 
 WHERE_PROMPT = """\
 A student wants to know where a topic is taught in their subject. You get the topic and \
-numbered excerpts from the subject's slides, lecturer notes and lecture transcripts. \
+numbered excerpts from the subject's slides, lecturer notes, lecture transcripts and \
+tutorial sheets. \
 For each excerpt that involves the topic, give its level:
 - "main": the topic is what the excerpt is about, or the lecturer spends real time on it \
 (defines it, explains it, works through an example of it).
@@ -46,13 +47,15 @@ WHERE_PATTERNS = [
     re.compile(p, re.IGNORECASE)
     for p in [
         # where is/was/are X taught/covered/... ; in which week was X covered
-        r"^(?:where|in which (?:weeks?|lectures?|slides?))\s+(?:is|are|was|were|did we|do we|"
+        r"^(?:where|in which (?:weeks?|lectures?|slides?|tutorials?|workshops?))\s+"
+        r"(?:is|are|was|were|did we|do we|"
         r"have we|does the (?:course|subject|lecturer))\s+" + _TOPIC + r"\s+(?:first\s+)?"
         r"(?:taught|covered|explained|introduced|discussed|mentioned|defined|presented|"
         r"talked about|learn(?:ed|t)?|cover(?:ed)?|teach|explain|introduce|discuss)"
         r"(?:\s+(?:in (?:the )?(?:course|subject|lectures?|slides?)))?" + _END,
         # which week covers X ; which lecture was about X
-        r"^(?:which|what)\s+(?:weeks?|lectures?|slides?|parts? of the (?:course|subject))\s+"
+        r"^(?:which|what)\s+(?:weeks?|lectures?|slides?|tutorials?|workshops?|"
+        r"parts? of the (?:course|subject))\s+"
         r"(?:covers?|covered|teach(?:es)?|taught|discuss(?:es|ed)?|introduces?|introduced|"
         r"explains?|explained|talks? about|talked about|mentions?|mentioned|"
         r"(?:is|was|are|were) (?:about|on)|did we (?:do|cover|learn|see))\s+" + _TOPIC + _END,
@@ -228,3 +231,26 @@ def week_ranges(weeks: list[int]) -> str:
         else:
             out.append(str(w))
     return ", ".join(out)
+
+
+LECTURE_TYPES = {"slide", "notes", "transcript"}
+
+
+def introduced_in_tutorial(weeks: list[WhereWeek]) -> bool:
+    """The topic turns up only in tutorial sheets, never in the lectures."""
+    types = {r.source_type for w in weeks for i in w.items for r in i.refs}
+    return bool(types) and not types & LECTURE_TYPES
+
+
+def tutorial_summary(weeks: list[WhereWeek], topic: str) -> str:
+    """What the tutorial itself says the topic is (its labelling's summary for a concept
+    the lectures don't cover), when one of the found sections has it."""
+    want = set(re.findall(r"[a-z0-9]+", topic.lower()))
+    for w in weeks:
+        for item in w.items:
+            for ref in item.refs:
+                for c in ref.meta.get("new_concepts") or []:
+                    name = set(re.findall(r"[a-z0-9]+", c["name"].lower()))
+                    if c.get("summary") and want and (want <= name or name <= want):
+                        return c["summary"]
+    return ""

@@ -29,7 +29,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session, sessionmaker
 
 from app.api.deps import DbSession, subject_or_404
-from app.db.models import Chat, Chunk, File, Slide, Subject, TranscriptSegment
+from app.db.models import Chat, Chunk, File, Slide, Subject, TranscriptSegment, TutorialSection
 from app.db.session import get_session_factory
 from app.llm.client import ProviderError
 from app.qa.answer import CITE_RE
@@ -39,6 +39,7 @@ from app.search.backend import Filters
 from app.services import chat as chats
 from app.services.ask import Answer, AskService, WhereAnswer, get_ask_service
 from app.services.board import weeks_phrase
+from app.tutorials.names import sheet_names
 from app.web.routes import FormLists, _file_title, _render_markdown, templates
 
 logger = logging.getLogger(__name__)
@@ -46,7 +47,10 @@ router = APIRouter(include_in_schema=False)
 AskDep = Annotated[AskService, Depends(get_ask_service)]
 SessionsDep = Annotated[sessionmaker, Depends(get_session_factory)]
 
-SOURCE_TYPES = {"slide": "Slides", "notes": "Lecturer notes", "transcript": "Lecture transcripts"}
+SOURCE_TYPES = {
+    "slide": "Slides", "notes": "Lecturer notes", "transcript": "Lecture transcripts",
+    "tutorial": "Tutorials",
+}  # fmt: skip
 DELTA_INTERVAL = 0.08  # seconds between streamed snapshots of the answer
 ICON_DIR = Path(__file__).parent / "templates" / "icons"
 ICONS = {
@@ -320,6 +324,8 @@ def source_preview(
                             notes=chunk.source_type == "notes")  # fmt: skip
     if chunk.source_type == "transcript":
         return _segment_panel(request, db, subject, chunk.file_id, meta.get("idx", 0))
+    if chunk.source_type == "tutorial" and meta.get("section_id"):
+        return _tutorial_panel(request, db, subject, uuid.UUID(meta["section_id"]))
     return _panel(request, {"subject": subject, "gone": True})
 
 
@@ -375,6 +381,25 @@ def _segment_panel(request, db: Session, subject: Subject, file_id: uuid.UUID, i
         "subject": subject, "transcript": file, "segments": segments, "idx": idx,
         "where": f"Week {file.week} lecture" if file.week is not None else "Lecture",
         "deck_title": _file_title(file, subject),
+    })  # fmt: skip
+
+
+def _tutorial_panel(request, db: Session, subject: Subject, section_id: uuid.UUID):
+    """A tutorial section: its labels, the lectures its concepts rely on, its text and
+    solution."""
+    section = db.get(TutorialSection, section_id)
+    file = db.get(File, section.file_id) if section else None
+    if section is None or file is None or file.subject_id != subject.id:
+        return _panel(request, {"subject": subject, "gone": True})
+    solution = db.get(TutorialSection, section.solution_section_id) if (
+        section.solution_section_id) else None  # fmt: skip
+    sheets = sheet_names([file], subject.code)
+    where = [sheets.get(file.id) or _file_title(file, subject)]
+    if file.week is not None:
+        where.append(f"filed in Week {file.week}")
+    return _panel(request, {
+        "subject": subject, "section": section, "file": file, "solution": solution,
+        "where": " · ".join(where),
     })  # fmt: skip
 
 
